@@ -58,6 +58,9 @@ private:
     juce::Rectangle<float> getSceneBounds() const;
     juce::Rectangle<float> getObjectBounds(const EngineerSceneModel::SceneObject& object) const;
     int hitTestObject(juce::Point<float> point) const;
+    bool hitTestObjectMoveHandle(juce::Point<float> point,
+                                 const EngineerSceneModel::SceneObject& object,
+                                 juce::Rectangle<float> rect) const;
     juce::Point<float> getSelectedGeometryAnchor(const EngineerSceneModel::SceneObject& object,
                                                  juce::Rectangle<float> rect) const;
     GeometryHit hitTestGeometryElement(juce::Point<float> point,

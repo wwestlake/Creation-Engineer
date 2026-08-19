@@ -324,6 +324,14 @@ The first navigation baseline should support:
 - mouse-wheel zoom
 - camera reset from the context menu
 
+Selection semantics should also be explicit:
+
+- left click selects without immediately moving the part
+- non-geometry objects expose a visible move handle for whole-object
+  repositioning
+- direct-geometry movement remains anchored to dedicated gizmos and element
+  proxies
+
 The immersive assembly-floor view is a rendered spatial mode using the same
 assembly/model data:
 

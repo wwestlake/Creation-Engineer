@@ -182,6 +182,19 @@ void drawViewportGizmo(juce::Graphics& g,
         g.drawEllipse(anchor.x - 18.0f, anchor.y - 18.0f, 36.0f, 36.0f, 2.2f);
     }
 }
+
+void drawObjectMoveHandle(juce::Graphics& g, juce::Rectangle<float> rect, bool selected)
+{
+    const auto centre = rect.getCentre();
+    const auto handleRect = juce::Rectangle<float>(centre.x - 9.0f, centre.y - 9.0f, 18.0f, 18.0f);
+
+    g.setColour(cyanAccent().withAlpha(selected ? 0.92f : 0.62f));
+    g.fillRoundedRectangle(handleRect, 5.0f);
+    g.setColour(juce::Colours::white.withAlpha(selected ? 0.90f : 0.55f));
+    g.drawRoundedRectangle(handleRect, 5.0f, selected ? 1.6f : 1.0f);
+    g.drawLine(centre.x - 5.0f, centre.y, centre.x + 5.0f, centre.y, selected ? 1.8f : 1.2f);
+    g.drawLine(centre.x, centre.y - 5.0f, centre.x, centre.y + 5.0f, selected ? 1.8f : 1.2f);
+}
 }
 
 EngineerViewportComponent::EngineerViewportComponent(EngineerSceneModel& model)
@@ -345,7 +358,7 @@ void EngineerViewportComponent::paint(juce::Graphics& g)
 
     g.setColour(juce::Colour(0xffb9c7d9));
     g.setFont(juce::Font(14.0f));
-    g.drawText("Right-click: viewport menu   |   Mouse wheel: zoom   |   Middle drag: orbit   |   Shift+middle drag: pan",
+    g.drawText("Left click: select   |   Drag center handle: move part   |   Right-click: viewport menu   |   Middle drag: orbit   |   Shift+middle drag: pan   |   Wheel: zoom",
                headerArea.removeFromTop(22.0f).toNearestInt(),
                juce::Justification::centredLeft,
                true);
@@ -398,6 +411,10 @@ void EngineerViewportComponent::paint(juce::Graphics& g)
                                       sceneModel.getSelectedGeometryTool(),
                                       gizmoDragMode);
                 }
+            }
+            else if (selected)
+            {
+                drawObjectMoveHandle(g, rect, true);
             }
 
             g.setColour((selected ? cyanAccent() : juce::Colour(0xff6ca1bf)).withAlpha(selected ? 0.95f : 0.65f));
@@ -455,6 +472,10 @@ void EngineerViewportComponent::paint(juce::Graphics& g)
                                       gizmoDragMode);
                 }
             }
+            else if (selected)
+            {
+                drawObjectMoveHandle(g, projected, true);
+            }
 
             g.setColour((selected ? accentColour() : juce::Colour(0xff8e7958)).withAlpha(selected ? 0.92f : 0.68f));
             g.fillRoundedRectangle(projected, 10.0f);
@@ -501,11 +522,12 @@ void EngineerViewportComponent::mouseDown(const juce::MouseEvent& event)
         return;
 
     sceneModel.selectObject(clickedIndex);
+    repaint();
 
     const auto& selectedObject = sceneModel.getSelectedObject();
+    const auto objectBounds = getObjectBounds(selectedObject);
     if (selectedObject.authoringState == EngineerSceneModel::AuthoringState::directGeometry)
     {
-        const auto objectBounds = getObjectBounds(selectedObject);
         const auto gizmoHit = hitTestGizmo(event.position, selectedObject, objectBounds);
         if (gizmoHit.valid)
         {
@@ -529,9 +551,18 @@ void EngineerViewportComponent::mouseDown(const juce::MouseEvent& event)
         }
     }
 
+    if (hitTestObjectMoveHandle(event.position, selectedObject, objectBounds))
+    {
+        dragAnchor = event.position;
+        dragStartPosition = selectedObject.normalizedPosition;
+        isDraggingObject = true;
+        isDraggingGeometryElement = false;
+        return;
+    }
+
     dragAnchor = event.position;
-    dragStartPosition = sceneModel.getSelectedObject().normalizedPosition;
-    isDraggingObject = true;
+    dragStartPosition = selectedObject.normalizedPosition;
+    isDraggingObject = false;
 }
 
 void EngineerViewportComponent::mouseDrag(const juce::MouseEvent& event)
@@ -691,6 +722,17 @@ int EngineerViewportComponent::hitTestObject(juce::Point<float> point) const
     }
 
     return -1;
+}
+
+bool EngineerViewportComponent::hitTestObjectMoveHandle(juce::Point<float> point,
+                                                        const EngineerSceneModel::SceneObject& object,
+                                                        juce::Rectangle<float> rect) const
+{
+    if (object.authoringState == EngineerSceneModel::AuthoringState::directGeometry)
+        return false;
+
+    const auto centre = rect.getCentre();
+    return juce::Rectangle<float>(centre.x - 12.0f, centre.y - 12.0f, 24.0f, 24.0f).contains(point);
 }
 
 juce::Point<float> EngineerViewportComponent::getSelectedGeometryAnchor(const EngineerSceneModel::SceneObject&,

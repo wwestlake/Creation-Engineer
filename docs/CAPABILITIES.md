@@ -195,6 +195,15 @@ navigation:
 - mouse-wheel zoom
 - quick camera preset switching and navigation reset from the viewport menu
 
+Selection and movement should also stay deliberate rather than collapsing into
+accidental drag behavior:
+
+- plain left click selects a part or geometry target without moving it
+- whole-object movement for non-geometry parts should come from an explicit
+  viewport move handle
+- direct-geometry movement should stay tied to visible gizmos and element
+  proxies instead of implicit drag-anywhere behavior
+
 ## Modifier Stack Workflow
 
 Creation Engineer should also support a modifier-style workflow similar in
