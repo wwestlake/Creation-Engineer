@@ -114,6 +114,7 @@ target_link_libraries(CreationEngineerApp PRIVATE
     ${CREATION_ENGINEER_DOCKING_TARGET}
     ${CREATION_ENGINEER_INTEROP_TARGET}
     creation_engineer_language_host
+    juce::juce_opengl
     juce::juce_gui_extra
     juce::juce_audio_basics
     juce::juce_audio_devices

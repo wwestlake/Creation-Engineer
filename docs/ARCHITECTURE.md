@@ -296,6 +296,11 @@ Responsibilities:
 This viewport architecture should support more than one presentation mode over
 the same engineering workspace data.
 
+The viewport itself must be a real 3D scene surface, not a painted 2D proxy.
+Objects live in spatial coordinates, the camera moves through real view and
+projection transforms, and interaction operates against scene geometry rather
+than flat decorative panels.
+
 ### Mechanical View Families
 
 For mechanical engineering, the workstation should support at least two
@@ -303,6 +308,7 @@ connected view families:
 
 1. technical design view
 2. immersive assembly-floor view
+3. planar layered view for electronics and board-oriented drafting
 
 The technical design view is the standard CAD-style engineering surface:
 
@@ -327,8 +333,7 @@ The first navigation baseline should support:
 Selection semantics should also be explicit:
 
 - left click selects without immediately moving the part
-- non-geometry objects expose a visible move handle for whole-object
-  repositioning
+- movement and editing tools should remain explicit and spatial
 - direct-geometry movement remains anchored to dedicated gizmos and element
   proxies
 
@@ -351,6 +356,16 @@ They should share:
 
 This makes the immersive mode an engineering inspection tool rather than a
 separate visualization export pipeline.
+
+The planar layered view should use the same scene/workspace foundation while
+switching into orthographic, layer-aware presentation suitable for:
+
+- 2D electronics design
+- layered board design
+- system-layout overlays that still need to coexist with 3D mechanical context
+
+That means Engineer can support both solid mechanical modeling and flattened
+technical layer work without introducing a second unrelated viewport stack.
 
 ## Parameter And Constraint System
 
