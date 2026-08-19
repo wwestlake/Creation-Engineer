@@ -439,7 +439,7 @@ void EngineerViewportComponent::paint(juce::Graphics& g)
 
     g.setColour(juce::Colour(0xffc2cfde));
     g.setFont(juce::Font(juce::FontOptions(13.0f)));
-    g.drawText("Orbit: middle drag   Pan: shift+middle drag   Zoom: wheel   Menu: right-click",
+    g.drawText("Orbit: middle drag or drag empty space   Pan: shift+drag empty space   Zoom: wheel   Menu: right-click",
                12, 34, getWidth() - 24, 18, juce::Justification::left, true);
 
     const auto& selected = sceneModel.getSelectedObject();
@@ -458,9 +458,14 @@ void EngineerViewportComponent::resized()
 
 void EngineerViewportComponent::mouseDown(const juce::MouseEvent& event)
 {
+    mouseDownPoint = event.position;
+    popupMenuTriggered = false;
+    pendingBackgroundNavigation = false;
+
     if (event.mods.isPopupMenu())
     {
         showContextMenu(event);
+        popupMenuTriggered = true;
         return;
     }
 
@@ -468,6 +473,7 @@ void EngineerViewportComponent::mouseDown(const juce::MouseEvent& event)
     {
         dragAnchor = event.position;
         isNavigatingView = true;
+        pendingBackgroundNavigation = false;
         return;
     }
 
@@ -485,11 +491,24 @@ void EngineerViewportComponent::mouseDown(const juce::MouseEvent& event)
         const auto clickedIndex = hitTestObject(event.position);
         if (clickedIndex >= 0)
             sceneModel.selectObject(clickedIndex);
+        else
+            pendingBackgroundNavigation = true;
     }
 }
 
 void EngineerViewportComponent::mouseDrag(const juce::MouseEvent& event)
 {
+    if (!isNavigatingView && pendingBackgroundNavigation && event.mods.isLeftButtonDown())
+    {
+        const auto dragDistance = event.position.getDistanceFrom(mouseDownPoint);
+        if (dragDistance > 3.0f)
+        {
+            dragAnchor = event.position;
+            isNavigatingView = true;
+            pendingBackgroundNavigation = false;
+        }
+    }
+
     if (!isNavigatingView)
     {
         if (!isDraggingGizmo)
@@ -567,10 +586,17 @@ void EngineerViewportComponent::mouseDrag(const juce::MouseEvent& event)
     updateViewMatrices();
 }
 
-void EngineerViewportComponent::mouseUp(const juce::MouseEvent&)
+void EngineerViewportComponent::mouseUp(const juce::MouseEvent& event)
 {
+    if (!popupMenuTriggered && event.mods.isPopupMenu() && event.position.getDistanceFrom(mouseDownPoint) < 3.0f)
+    {
+        showContextMenu(event);
+        popupMenuTriggered = true;
+    }
+
     isNavigatingView = false;
     isDraggingGizmo = false;
+    pendingBackgroundNavigation = false;
     gizmoDragMode = GizmoDragMode::none;
 }
 

@@ -112,8 +112,11 @@ private:
     MeshBuffer gridMesh;
 
     juce::Point<float> dragAnchor;
+    juce::Point<float> mouseDownPoint;
     bool isNavigatingView = false;
     bool isDraggingGizmo = false;
+    bool pendingBackgroundNavigation = false;
+    bool popupMenuTriggered = false;
     GizmoDragMode gizmoDragMode = GizmoDragMode::none;
     juce::Vector3D<float> orbitTarget { 0.0f, 0.0f, 0.0f };
     float orbitDistance = 18.0f;
