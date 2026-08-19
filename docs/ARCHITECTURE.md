@@ -311,6 +311,19 @@ The technical design view is the standard CAD-style engineering surface:
 - dimensions, guides, references, sectioning, and constraint overlays
 - selection and editing of engineering model structure
 
+This viewport should favor contextual interaction over persistent button banks.
+Primary view commands should live in a right-click context menu so the working
+surface remains clear for modeling while still exposing fast access to camera
+presets, view-family switching, primitive insertion, and direct-geometry tool
+selection.
+
+The first navigation baseline should support:
+
+- middle-mouse orbit
+- shift plus middle-mouse pan
+- mouse-wheel zoom
+- camera reset from the context menu
+
 The immersive assembly-floor view is a rendered spatial mode using the same
 assembly/model data:
 

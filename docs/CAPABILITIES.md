@@ -182,6 +182,19 @@ The first viewport gizmo pass should also support:
 - snapping enable/disable control
 - selectable numeric snap increments for geometry edits
 
+The viewport interaction model should avoid permanent banks of buttons across
+the render surface. Core viewport commands should be available from a
+right-click context menu so the modeling area stays visually clear while still
+exposing fast access to mode, camera, primitive, and direct-geometry actions.
+
+The baseline camera interaction should feel closer to CAD and Blender-style
+navigation:
+
+- middle-drag orbiting around the working view
+- shift plus middle-drag panning
+- mouse-wheel zoom
+- quick camera preset switching and navigation reset from the viewport menu
+
 ## Modifier Stack Workflow
 
 Creation Engineer should also support a modifier-style workflow similar in
