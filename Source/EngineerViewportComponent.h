@@ -32,6 +32,7 @@ public:
     void mouseDown(const juce::MouseEvent& event) override;
     void mouseDrag(const juce::MouseEvent& event) override;
     void mouseUp(const juce::MouseEvent& event) override;
+    void mouseWheelMove(const juce::MouseEvent& event, const juce::MouseWheelDetails& wheel) override;
 
     ViewMode getViewMode() const noexcept;
 
@@ -50,6 +51,9 @@ private:
     };
 
     void engineerSceneModelChanged() override;
+    void showContextMenu(const juce::MouseEvent& event);
+    void handleContextMenuResult(int result, int clickedIndex);
+    void applyCameraPreset(EngineerSceneModel::CameraPreset preset);
     juce::Rectangle<float> getViewportBounds() const;
     juce::Rectangle<float> getSceneBounds() const;
     juce::Rectangle<float> getObjectBounds(const EngineerSceneModel::SceneObject& object) const;
@@ -62,6 +66,8 @@ private:
     GizmoHit hitTestGizmo(juce::Point<float> point,
                           const EngineerSceneModel::SceneObject& object,
                           juce::Rectangle<float> rect) const;
+    juce::Point<float> transformPoint(juce::Point<float> point, juce::Rectangle<float> sceneBounds) const;
+    juce::Rectangle<float> transformRect(juce::Rectangle<float> rect, juce::Rectangle<float> sceneBounds) const;
     void configureButton(juce::TextButton& button);
     void updateModeButtons();
     void updatePrimitiveButtons();
@@ -73,9 +79,14 @@ private:
     EngineerSceneModel& sceneModel;
     bool isDraggingObject = false;
     bool isDraggingGeometryElement = false;
+    bool isNavigatingView = false;
     GizmoDragMode gizmoDragMode = GizmoDragMode::none;
     juce::Point<float> dragAnchor;
     juce::Point<float> dragStartPosition;
+    juce::Point<float> viewPan;
+    float viewZoom = 1.0f;
+    float viewYaw = 0.0f;
+    float viewPitch = 0.0f;
 
     juce::TextButton designViewButton { "Design View" };
     juce::TextButton assemblyFloorButton { "Assembly Floor" };

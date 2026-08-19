@@ -188,114 +188,7 @@ EngineerViewportComponent::EngineerViewportComponent(EngineerSceneModel& model)
     : sceneModel(model)
 {
     sceneModel.addListener(this);
-    configureButton(designViewButton);
-    configureButton(assemblyFloorButton);
-    configureButton(isoCameraButton);
-    configureButton(topCameraButton);
-    configureButton(walkCameraButton);
-    configureButton(blockButton);
-    configureButton(cylinderButton);
-    configureButton(plateButton);
-    configureButton(objectOneButton);
-    configureButton(objectTwoButton);
-    configureButton(objectThreeButton);
-    configureButton(refreshButton);
-
-    designViewButton.onClick = [this]
-    {
-        viewMode = ViewMode::design;
-        updateModeButtons();
-        repaint();
-    };
-
-    assemblyFloorButton.onClick = [this]
-    {
-        viewMode = ViewMode::assemblyFloor;
-        updateModeButtons();
-        repaint();
-    };
-
-    blockButton.onClick = [this]
-    {
-        selectedPrimitive = "Block";
-        sceneModel.setSelectedObjectPrimitiveType(selectedPrimitive);
-        updatePrimitiveButtons();
-        repaint();
-    };
-
-    cylinderButton.onClick = [this]
-    {
-        selectedPrimitive = "Cylinder";
-        sceneModel.setSelectedObjectPrimitiveType(selectedPrimitive);
-        updatePrimitiveButtons();
-        repaint();
-    };
-
-    plateButton.onClick = [this]
-    {
-        selectedPrimitive = "Plate";
-        sceneModel.setSelectedObjectPrimitiveType(selectedPrimitive);
-        updatePrimitiveButtons();
-        repaint();
-    };
-
-    isoCameraButton.onClick = [this]
-    {
-        sceneModel.setCameraPreset(EngineerSceneModel::CameraPreset::iso);
-        updateCameraButtons();
-        repaint();
-    };
-
-    topCameraButton.onClick = [this]
-    {
-        sceneModel.setCameraPreset(EngineerSceneModel::CameraPreset::top);
-        updateCameraButtons();
-        repaint();
-    };
-
-    walkCameraButton.onClick = [this]
-    {
-        sceneModel.setCameraPreset(EngineerSceneModel::CameraPreset::walk);
-        updateCameraButtons();
-        repaint();
-    };
-
-    objectOneButton.onClick = [this]
-    {
-        sceneModel.selectObject(0);
-        updateObjectButtons();
-        repaint();
-    };
-
-    objectTwoButton.onClick = [this]
-    {
-        sceneModel.selectObject(1);
-        updateObjectButtons();
-        repaint();
-    };
-
-    objectThreeButton.onClick = [this]
-    {
-        sceneModel.selectObject(2);
-        updateObjectButtons();
-        repaint();
-    };
-
-    refreshButton.onClick = [this] { repaint(); };
-
-    addAndMakeVisible(designViewButton);
-    addAndMakeVisible(assemblyFloorButton);
-    addAndMakeVisible(isoCameraButton);
-    addAndMakeVisible(topCameraButton);
-    addAndMakeVisible(walkCameraButton);
-    addAndMakeVisible(blockButton);
-    addAndMakeVisible(cylinderButton);
-    addAndMakeVisible(plateButton);
-    addAndMakeVisible(objectOneButton);
-    addAndMakeVisible(objectTwoButton);
-    addAndMakeVisible(objectThreeButton);
-    addAndMakeVisible(refreshButton);
-
+    applyCameraPreset(sceneModel.getCameraPreset());
     updateModeButtons();
     updatePrimitiveButtons();
     updateCameraButtons();
@@ -310,10 +203,118 @@ EngineerViewportComponent::~EngineerViewportComponent()
 void EngineerViewportComponent::engineerSceneModelChanged()
 {
     selectedPrimitive = sceneModel.getSelectedObject().primitiveType;
+    if (!isNavigatingView)
+        applyCameraPreset(sceneModel.getCameraPreset());
     updateCameraButtons();
     updatePrimitiveButtons();
     updateObjectButtons();
     repaint();
+}
+
+void EngineerViewportComponent::showContextMenu(const juce::MouseEvent& event)
+{
+    juce::PopupMenu menu;
+    juce::PopupMenu viewMenu;
+    viewMenu.addItem(101, "Technical Design View", true, viewMode == ViewMode::design);
+    viewMenu.addItem(102, "Assembly Floor View", true, viewMode == ViewMode::assemblyFloor);
+    menu.addSubMenu("View Mode", viewMenu);
+
+    juce::PopupMenu cameraMenu;
+    cameraMenu.addItem(111, "ISO", true, sceneModel.getCameraPreset() == EngineerSceneModel::CameraPreset::iso);
+    cameraMenu.addItem(112, "Top", true, sceneModel.getCameraPreset() == EngineerSceneModel::CameraPreset::top);
+    cameraMenu.addItem(113, "Walk", true, sceneModel.getCameraPreset() == EngineerSceneModel::CameraPreset::walk);
+    cameraMenu.addSeparator();
+    cameraMenu.addItem(114, "Reset Navigation");
+    menu.addSubMenu("Camera", cameraMenu);
+
+    const auto clickedIndex = hitTestObject(event.position);
+    if (clickedIndex >= 0)
+    {
+        menu.addItem(120, "Select " + sceneModel.getObjects()[static_cast<size_t>(clickedIndex)].name);
+
+        juce::PopupMenu objectMenu;
+        objectMenu.addItem(121, "Block", true, sceneModel.getObjects()[static_cast<size_t>(clickedIndex)].primitiveType == "Block");
+        objectMenu.addItem(122, "Cylinder", true, sceneModel.getObjects()[static_cast<size_t>(clickedIndex)].primitiveType == "Cylinder");
+        objectMenu.addItem(123, "Plate", true, sceneModel.getObjects()[static_cast<size_t>(clickedIndex)].primitiveType == "Plate");
+        menu.addSubMenu("Primitive", objectMenu);
+    }
+
+    if (sceneModel.isSelectedObjectDirectGeometry())
+    {
+        juce::PopupMenu geometryMenu;
+        geometryMenu.addItem(131, "Translate", true, sceneModel.getSelectedGeometryTool() == EngineerSceneModel::GeometryTool::translate);
+        geometryMenu.addItem(132, "Scale", true, sceneModel.getSelectedGeometryTool() == EngineerSceneModel::GeometryTool::scale);
+        geometryMenu.addItem(133, "Extrude", true, sceneModel.getSelectedGeometryTool() == EngineerSceneModel::GeometryTool::extrude);
+        geometryMenu.addItem(134, "Bevel", true, sceneModel.getSelectedGeometryTool() == EngineerSceneModel::GeometryTool::bevel);
+        geometryMenu.addSeparator();
+        geometryMenu.addItem(135, sceneModel.isGeometrySnappingEnabled() ? "Disable Snapping" : "Enable Snapping");
+        menu.addSubMenu("Direct Geometry", geometryMenu);
+    }
+
+    juce::Component::SafePointer<EngineerViewportComponent> safeThis(this);
+    menu.showMenuAsync(juce::PopupMenu::Options().withTargetScreenArea({ event.getScreenPosition(), { 1, 1 } }),
+                       [safeThis, clickedIndex](int result)
+                       {
+                           if (safeThis != nullptr)
+                               safeThis->handleContextMenuResult(result, clickedIndex);
+                       });
+}
+
+void EngineerViewportComponent::handleContextMenuResult(int result, int clickedIndex)
+{
+    switch (result)
+    {
+        case 101: viewMode = ViewMode::design; break;
+        case 102: viewMode = ViewMode::assemblyFloor; break;
+        case 111: sceneModel.setCameraPreset(EngineerSceneModel::CameraPreset::iso); break;
+        case 112: sceneModel.setCameraPreset(EngineerSceneModel::CameraPreset::top); break;
+        case 113: sceneModel.setCameraPreset(EngineerSceneModel::CameraPreset::walk); break;
+        case 114:
+            viewPan = {};
+            viewZoom = 1.0f;
+            applyCameraPreset(sceneModel.getCameraPreset());
+            break;
+        case 120:
+            if (clickedIndex >= 0)
+                sceneModel.selectObject(clickedIndex);
+            break;
+        case 121:
+        case 122:
+        case 123:
+            if (clickedIndex >= 0)
+            {
+                sceneModel.selectObject(clickedIndex);
+                sceneModel.setSelectedObjectPrimitiveType(result == 121 ? "Block" : result == 122 ? "Cylinder" : "Plate");
+            }
+            break;
+        case 131: sceneModel.setSelectedGeometryTool(EngineerSceneModel::GeometryTool::translate); break;
+        case 132: sceneModel.setSelectedGeometryTool(EngineerSceneModel::GeometryTool::scale); break;
+        case 133: sceneModel.setSelectedGeometryTool(EngineerSceneModel::GeometryTool::extrude); break;
+        case 134: sceneModel.setSelectedGeometryTool(EngineerSceneModel::GeometryTool::bevel); break;
+        case 135: sceneModel.setGeometrySnappingEnabled(!sceneModel.isGeometrySnappingEnabled()); break;
+        default: break;
+    }
+
+    repaint();
+}
+
+void EngineerViewportComponent::applyCameraPreset(EngineerSceneModel::CameraPreset preset)
+{
+    switch (preset)
+    {
+        case EngineerSceneModel::CameraPreset::iso:
+            viewYaw = 0.40f;
+            viewPitch = 0.30f;
+            break;
+        case EngineerSceneModel::CameraPreset::top:
+            viewYaw = 0.0f;
+            viewPitch = 0.0f;
+            break;
+        case EngineerSceneModel::CameraPreset::walk:
+            viewYaw = 0.75f;
+            viewPitch = 0.18f;
+            break;
+    }
 }
 
 void EngineerViewportComponent::paint(juce::Graphics& g)
@@ -344,7 +345,7 @@ void EngineerViewportComponent::paint(juce::Graphics& g)
 
     g.setColour(juce::Colour(0xffb9c7d9));
     g.setFont(juce::Font(14.0f));
-    g.drawText("Primitive seed: " + selectedPrimitive + "   |   Grid: 10 mm   |   Camera: " + cameraLabel(sceneModel.getCameraPreset()),
+    g.drawText("Right-click: viewport menu   |   Mouse wheel: zoom   |   Middle drag: orbit   |   Shift+middle drag: pan",
                headerArea.removeFromTop(22.0f).toNearestInt(),
                juce::Justification::centredLeft,
                true);
@@ -356,7 +357,8 @@ void EngineerViewportComponent::paint(juce::Graphics& g)
                true);
 
     g.drawText("Workflow: " + EngineerSceneModel::toDisplayString(selectedObject.authoringState)
-                + "   |   Mirror X: " + juce::String(selectedObject.mirrorXEnabled ? "On" : "Off"),
+                + "   |   Camera: " + cameraLabel(sceneModel.getCameraPreset())
+                + "   |   Zoom: " + juce::String(viewZoom, 2),
                headerArea.removeFromTop(22.0f).toNearestInt(),
                juce::Justification::centredLeft,
                true);
@@ -478,6 +480,22 @@ void EngineerViewportComponent::paint(juce::Graphics& g)
 
 void EngineerViewportComponent::mouseDown(const juce::MouseEvent& event)
 {
+    if (event.mods.isPopupMenu())
+    {
+        showContextMenu(event);
+        return;
+    }
+
+    if (event.mods.isMiddleButtonDown() || (event.mods.isLeftButtonDown() && event.mods.isAltDown()))
+    {
+        dragAnchor = event.position;
+        isNavigatingView = true;
+        isDraggingObject = false;
+        isDraggingGeometryElement = false;
+        gizmoDragMode = GizmoDragMode::none;
+        return;
+    }
+
     const auto clickedIndex = hitTestObject(event.position);
     if (clickedIndex < 0)
         return;
@@ -518,6 +536,25 @@ void EngineerViewportComponent::mouseDown(const juce::MouseEvent& event)
 
 void EngineerViewportComponent::mouseDrag(const juce::MouseEvent& event)
 {
+    if (isNavigatingView)
+    {
+        const auto deltaPixels = event.position - dragAnchor;
+        dragAnchor = event.position;
+
+        if (event.mods.isShiftDown())
+        {
+            viewPan += deltaPixels;
+        }
+        else
+        {
+            viewYaw += deltaPixels.x * 0.01f;
+            viewPitch = juce::jlimit(-0.85f, 0.85f, viewPitch - deltaPixels.y * 0.008f);
+        }
+
+        repaint();
+        return;
+    }
+
     if (isDraggingGeometryElement)
     {
         const auto sceneBounds = getSceneBounds();
@@ -598,38 +635,18 @@ void EngineerViewportComponent::mouseUp(const juce::MouseEvent&)
 {
     isDraggingObject = false;
     isDraggingGeometryElement = false;
+    isNavigatingView = false;
     gizmoDragMode = GizmoDragMode::none;
+}
+
+void EngineerViewportComponent::mouseWheelMove(const juce::MouseEvent&, const juce::MouseWheelDetails& wheel)
+{
+    viewZoom = juce::jlimit(0.45f, 2.75f, viewZoom + wheel.deltaY * 0.22f);
+    repaint();
 }
 
 void EngineerViewportComponent::resized()
 {
-    auto area = getLocalBounds().reduced(14);
-    auto top = area.removeFromTop(36);
-    auto secondRow = area.removeFromTop(30);
-    auto thirdRow = area.removeFromTop(30);
-
-    designViewButton.setBounds(top.removeFromLeft(120));
-    top.removeFromLeft(8);
-    assemblyFloorButton.setBounds(top.removeFromLeft(132));
-    top.removeFromLeft(16);
-    isoCameraButton.setBounds(top.removeFromLeft(64));
-    top.removeFromLeft(6);
-    topCameraButton.setBounds(top.removeFromLeft(64));
-    top.removeFromLeft(6);
-    walkCameraButton.setBounds(top.removeFromLeft(64));
-    refreshButton.setBounds(top.removeFromRight(124));
-
-    blockButton.setBounds(secondRow.removeFromLeft(88));
-    secondRow.removeFromLeft(8);
-    cylinderButton.setBounds(secondRow.removeFromLeft(88));
-    secondRow.removeFromLeft(8);
-    plateButton.setBounds(secondRow.removeFromLeft(88));
-
-    objectOneButton.setBounds(thirdRow.removeFromLeft(120));
-    thirdRow.removeFromLeft(8);
-    objectTwoButton.setBounds(thirdRow.removeFromLeft(132));
-    thirdRow.removeFromLeft(8);
-    objectThreeButton.setBounds(thirdRow.removeFromLeft(108));
 }
 
 EngineerViewportComponent::ViewMode EngineerViewportComponent::getViewMode() const noexcept
@@ -655,9 +672,11 @@ juce::Rectangle<float> EngineerViewportComponent::getSceneBounds() const
 
 juce::Rectangle<float> EngineerViewportComponent::getObjectBounds(const EngineerSceneModel::SceneObject& object) const
 {
-    auto bounds = normalizedRectToBounds(getSceneBounds(), object.normalizedPosition, object.normalizedSize);
+    const auto sceneBounds = getSceneBounds();
+    auto bounds = normalizedRectToBounds(sceneBounds, object.normalizedPosition, object.normalizedSize);
+    bounds = transformRect(bounds, sceneBounds);
     if (viewMode == ViewMode::assemblyFloor)
-        return projectForAssemblyFloor(bounds, object.normalizedPosition);
+        return projectForAssemblyFloor(bounds, transformPoint(normalizedRectToBounds(sceneBounds, object.normalizedPosition, object.normalizedSize).getCentre(), sceneBounds));
 
     return bounds;
 }
@@ -764,6 +783,29 @@ EngineerViewportComponent::GizmoHit EngineerViewportComponent::hitTestGizmo(juce
         return { true, GizmoDragMode::planar };
 
     return hit;
+}
+
+juce::Point<float> EngineerViewportComponent::transformPoint(juce::Point<float> point, juce::Rectangle<float> sceneBounds) const
+{
+    auto centered = point - sceneBounds.getCentre();
+    const auto cosYaw = std::cos(viewYaw);
+    const auto sinYaw = std::sin(viewYaw);
+    juce::Point<float> rotated(centered.x * cosYaw - centered.y * sinYaw,
+                               centered.x * sinYaw + centered.y * cosYaw);
+    rotated.x *= viewZoom;
+    rotated.y *= viewZoom * (0.88f + 0.12f * std::cos(viewPitch));
+    return sceneBounds.getCentre() + rotated + viewPan;
+}
+
+juce::Rectangle<float> EngineerViewportComponent::transformRect(juce::Rectangle<float> rect, juce::Rectangle<float> sceneBounds) const
+{
+    const auto transformedCentre = transformPoint(rect.getCentre(), sceneBounds);
+    auto width = rect.getWidth() * viewZoom;
+    auto height = rect.getHeight() * viewZoom * (0.88f + 0.12f * std::cos(viewPitch));
+    return { transformedCentre.x - width * 0.5f,
+             transformedCentre.y - height * 0.5f,
+             width,
+             height };
 }
 
 void EngineerViewportComponent::configureButton(juce::TextButton& button)
