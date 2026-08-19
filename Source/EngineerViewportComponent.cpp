@@ -108,38 +108,40 @@ std::array<juce::Point<float>, 4> rectangleEdgeMidpoints(const juce::Rectangle<f
     };
 }
 
-void drawGeometryElementSelection(juce::Graphics& g,
-                                  juce::Rectangle<float> rect,
-                                  EngineerSceneModel::GeometryElementKind kind,
-                                  int index)
+void drawGeometryElementProxies(juce::Graphics& g,
+                                juce::Rectangle<float> rect,
+                                EngineerSceneModel::GeometryElementKind selectedKind,
+                                int selectedIndex)
 {
-    g.setColour(juce::Colour(0xffffd27a));
+    const auto vertices = rectangleVertices(rect);
+    const auto midpoints = rectangleEdgeMidpoints(rect);
+    const auto faceRect = rect.reduced(8.0f);
 
-    switch (kind)
+    for (int i = 0; i < 4; ++i)
     {
-        case EngineerSceneModel::GeometryElementKind::vertex:
-        {
-            const auto vertices = rectangleVertices(rect);
-            const auto point = vertices[static_cast<size_t>(juce::jlimit(0, 3, index))];
-            g.fillEllipse(point.x - 5.0f, point.y - 5.0f, 10.0f, 10.0f);
-            break;
-        }
-
-        case EngineerSceneModel::GeometryElementKind::edge:
-        {
-            const auto midpoints = rectangleEdgeMidpoints(rect);
-            const auto point = midpoints[static_cast<size_t>(juce::jlimit(0, 3, index))];
-            juce::Rectangle<float> handle(point.x - 8.0f, point.y - 4.0f, 16.0f, 8.0f);
-            g.fillRoundedRectangle(handle, 3.0f);
-            break;
-        }
-
-        case EngineerSceneModel::GeometryElementKind::face:
-        {
-            g.drawRoundedRectangle(rect.reduced(8.0f), 8.0f, 2.0f);
-            break;
-        }
+        const bool selected = selectedKind == EngineerSceneModel::GeometryElementKind::vertex && selectedIndex == i;
+        g.setColour(juce::Colour(0xffffd27a).withAlpha(selected ? 1.0f : 0.55f));
+        const auto point = vertices[static_cast<size_t>(i)];
+        g.fillEllipse(point.x - (selected ? 6.0f : 4.0f),
+                      point.y - (selected ? 6.0f : 4.0f),
+                      selected ? 12.0f : 8.0f,
+                      selected ? 12.0f : 8.0f);
     }
+
+    for (int i = 0; i < 4; ++i)
+    {
+        const bool selected = selectedKind == EngineerSceneModel::GeometryElementKind::edge && selectedIndex == i;
+        g.setColour(juce::Colour(0xff59d0ff).withAlpha(selected ? 1.0f : 0.50f));
+        const auto point = midpoints[static_cast<size_t>(i)];
+        juce::Rectangle<float> handle(point.x - (selected ? 10.0f : 8.0f),
+                                      point.y - (selected ? 5.0f : 4.0f),
+                                      selected ? 20.0f : 16.0f,
+                                      selected ? 10.0f : 8.0f);
+        g.fillRoundedRectangle(handle, 3.0f);
+    }
+
+    g.setColour(juce::Colour(0xffcfe8ff).withAlpha(selectedKind == EngineerSceneModel::GeometryElementKind::face ? 0.90f : 0.35f));
+    g.drawRoundedRectangle(faceRect, 8.0f, selectedKind == EngineerSceneModel::GeometryElementKind::face ? 2.2f : 1.0f);
 }
 }
 
@@ -348,7 +350,7 @@ void EngineerViewportComponent::paint(juce::Graphics& g)
             {
                 drawDirectGeometryOverlay(g, rect, object.geometryDepth, object.bevelAmount, selected);
                 if (selected)
-                    drawGeometryElementSelection(g, rect, sceneModel.getSelectedGeometryElementKind(), sceneModel.getSelectedGeometryElementIndex());
+                    drawGeometryElementProxies(g, rect, sceneModel.getSelectedGeometryElementKind(), sceneModel.getSelectedGeometryElementIndex());
             }
 
             g.setColour((selected ? cyanAccent() : juce::Colour(0xff6ca1bf)).withAlpha(selected ? 0.95f : 0.65f));
@@ -398,7 +400,7 @@ void EngineerViewportComponent::paint(juce::Graphics& g)
             {
                 drawDirectGeometryOverlay(g, projected, object.geometryDepth, object.bevelAmount, selected);
                 if (selected)
-                    drawGeometryElementSelection(g, projected, sceneModel.getSelectedGeometryElementKind(), sceneModel.getSelectedGeometryElementIndex());
+                    drawGeometryElementProxies(g, projected, sceneModel.getSelectedGeometryElementKind(), sceneModel.getSelectedGeometryElementIndex());
             }
 
             g.setColour((selected ? accentColour() : juce::Colour(0xff8e7958)).withAlpha(selected ? 0.92f : 0.68f));
@@ -430,6 +432,22 @@ void EngineerViewportComponent::mouseDown(const juce::MouseEvent& event)
         return;
 
     sceneModel.selectObject(clickedIndex);
+
+    const auto& selectedObject = sceneModel.getSelectedObject();
+    if (selectedObject.authoringState == EngineerSceneModel::AuthoringState::directGeometry)
+    {
+        const auto geometryHit = hitTestGeometryElement(event.position, selectedObject, getObjectBounds(selectedObject));
+        if (geometryHit.valid)
+        {
+            sceneModel.setSelectedGeometryElementKind(geometryHit.kind);
+            sceneModel.setSelectedGeometryElementIndex(geometryHit.index);
+            dragAnchor = event.position;
+            isDraggingGeometryElement = true;
+            isDraggingObject = false;
+            return;
+        }
+    }
+
     dragAnchor = event.position;
     dragStartPosition = sceneModel.getSelectedObject().normalizedPosition;
     isDraggingObject = true;
@@ -437,6 +455,20 @@ void EngineerViewportComponent::mouseDown(const juce::MouseEvent& event)
 
 void EngineerViewportComponent::mouseDrag(const juce::MouseEvent& event)
 {
+    if (isDraggingGeometryElement)
+    {
+        const auto sceneBounds = getSceneBounds();
+        if (sceneBounds.isEmpty())
+            return;
+
+        auto deltaPixels = event.position - dragAnchor;
+        juce::Point<float> deltaNormalized(deltaPixels.x / sceneBounds.getWidth(),
+                                           deltaPixels.y / sceneBounds.getHeight());
+        sceneModel.nudgeSelectedGeometryElement(deltaNormalized);
+        dragAnchor = event.position;
+        return;
+    }
+
     if (!isDraggingObject)
         return;
 
@@ -456,6 +488,7 @@ void EngineerViewportComponent::mouseDrag(const juce::MouseEvent& event)
 void EngineerViewportComponent::mouseUp(const juce::MouseEvent&)
 {
     isDraggingObject = false;
+    isDraggingGeometryElement = false;
 }
 
 void EngineerViewportComponent::resized()
@@ -529,6 +562,42 @@ int EngineerViewportComponent::hitTestObject(juce::Point<float> point) const
     }
 
     return -1;
+}
+
+EngineerViewportComponent::GeometryHit EngineerViewportComponent::hitTestGeometryElement(juce::Point<float> point,
+                                                                                         const EngineerSceneModel::SceneObject& object,
+                                                                                         juce::Rectangle<float> rect) const
+{
+    GeometryHit hit;
+    if (object.authoringState != EngineerSceneModel::AuthoringState::directGeometry)
+        return hit;
+
+    const auto vertices = rectangleVertices(rect);
+    for (int i = 0; i < 4; ++i)
+    {
+        juce::Rectangle<float> handle(vertices[static_cast<size_t>(i)].x - 8.0f,
+                                      vertices[static_cast<size_t>(i)].y - 8.0f,
+                                      16.0f,
+                                      16.0f);
+        if (handle.contains(point))
+            return { true, EngineerSceneModel::GeometryElementKind::vertex, i };
+    }
+
+    const auto midpoints = rectangleEdgeMidpoints(rect);
+    for (int i = 0; i < 4; ++i)
+    {
+        juce::Rectangle<float> handle(midpoints[static_cast<size_t>(i)].x - 10.0f,
+                                      midpoints[static_cast<size_t>(i)].y - 6.0f,
+                                      20.0f,
+                                      12.0f);
+        if (handle.contains(point))
+            return { true, EngineerSceneModel::GeometryElementKind::edge, i };
+    }
+
+    if (rect.reduced(10.0f).contains(point))
+        return { true, EngineerSceneModel::GeometryElementKind::face, 0 };
+
+    return hit;
 }
 
 void EngineerViewportComponent::configureButton(juce::TextButton& button)
