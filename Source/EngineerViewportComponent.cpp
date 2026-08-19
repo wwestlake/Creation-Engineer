@@ -8,6 +8,8 @@ juce::Colour panelFill() noexcept { return juce::Colour(0xff101722); }
 juce::Colour frameColour() noexcept { return juce::Colour(0xff2d3e55); }
 juce::Colour accentColour() noexcept { return juce::Colour(0xffffa247); }
 juce::Colour cyanAccent() noexcept { return juce::Colour(0xff59d0ff); }
+juce::Colour xAxisColour() noexcept { return juce::Colour(0xffff6b6b); }
+juce::Colour yAxisColour() noexcept { return juce::Colour(0xff5ae08a); }
 
 void drawSceneGrid(juce::Graphics& g, juce::Rectangle<float> area)
 {
@@ -142,6 +144,43 @@ void drawGeometryElementProxies(juce::Graphics& g,
 
     g.setColour(juce::Colour(0xffcfe8ff).withAlpha(selectedKind == EngineerSceneModel::GeometryElementKind::face ? 0.90f : 0.35f));
     g.drawRoundedRectangle(faceRect, 8.0f, selectedKind == EngineerSceneModel::GeometryElementKind::face ? 2.2f : 1.0f);
+}
+
+void drawViewportGizmo(juce::Graphics& g,
+                       juce::Point<float> anchor,
+                       EngineerSceneModel::GeometryTool tool,
+                       EngineerViewportComponent::GizmoDragMode activeMode)
+{
+    const float axisLength = 34.0f;
+    const float handleRadius = 5.0f;
+
+    auto xEnd = juce::Point<float>(anchor.x + axisLength, anchor.y);
+    auto yEnd = juce::Point<float>(anchor.x, anchor.y - axisLength);
+
+    g.setColour(xAxisColour().withAlpha(activeMode == EngineerViewportComponent::GizmoDragMode::xAxis ? 1.0f : 0.82f));
+    g.drawArrow(juce::Line<float>(anchor, xEnd), 2.6f, 10.0f, 8.0f);
+    g.fillEllipse(xEnd.x - handleRadius, xEnd.y - handleRadius, handleRadius * 2.0f, handleRadius * 2.0f);
+
+    g.setColour(yAxisColour().withAlpha(activeMode == EngineerViewportComponent::GizmoDragMode::yAxis ? 1.0f : 0.82f));
+    g.drawArrow(juce::Line<float>(anchor, yEnd), 2.6f, 10.0f, 8.0f);
+    g.fillEllipse(yEnd.x - handleRadius, yEnd.y - handleRadius, handleRadius * 2.0f, handleRadius * 2.0f);
+
+    g.setColour(cyanAccent().withAlpha(activeMode == EngineerViewportComponent::GizmoDragMode::planar ? 0.95f : 0.65f));
+    g.fillRoundedRectangle(juce::Rectangle<float>(anchor.x - 7.0f, anchor.y - 7.0f, 14.0f, 14.0f), 4.0f);
+
+    if (tool == EngineerSceneModel::GeometryTool::extrude)
+    {
+        auto depthEnd = juce::Point<float>(anchor.x + 24.0f, anchor.y - 24.0f);
+        g.setColour(accentColour().withAlpha(activeMode == EngineerViewportComponent::GizmoDragMode::depthAxis ? 1.0f : 0.82f));
+        g.drawArrow(juce::Line<float>(anchor, depthEnd), 2.2f, 9.0f, 7.0f);
+        g.fillEllipse(depthEnd.x - 4.0f, depthEnd.y - 4.0f, 8.0f, 8.0f);
+    }
+
+    if (tool == EngineerSceneModel::GeometryTool::bevel)
+    {
+        g.setColour(accentColour().withAlpha(activeMode == EngineerViewportComponent::GizmoDragMode::bevelAxis ? 1.0f : 0.82f));
+        g.drawEllipse(anchor.x - 18.0f, anchor.y - 18.0f, 36.0f, 36.0f, 2.2f);
+    }
 }
 }
 
@@ -350,7 +389,13 @@ void EngineerViewportComponent::paint(juce::Graphics& g)
             {
                 drawDirectGeometryOverlay(g, rect, object.geometryDepth, object.bevelAmount, selected);
                 if (selected)
+                {
                     drawGeometryElementProxies(g, rect, sceneModel.getSelectedGeometryElementKind(), sceneModel.getSelectedGeometryElementIndex());
+                    drawViewportGizmo(g,
+                                      getSelectedGeometryAnchor(object, rect),
+                                      sceneModel.getSelectedGeometryTool(),
+                                      gizmoDragMode);
+                }
             }
 
             g.setColour((selected ? cyanAccent() : juce::Colour(0xff6ca1bf)).withAlpha(selected ? 0.95f : 0.65f));
@@ -400,7 +445,13 @@ void EngineerViewportComponent::paint(juce::Graphics& g)
             {
                 drawDirectGeometryOverlay(g, projected, object.geometryDepth, object.bevelAmount, selected);
                 if (selected)
+                {
                     drawGeometryElementProxies(g, projected, sceneModel.getSelectedGeometryElementKind(), sceneModel.getSelectedGeometryElementIndex());
+                    drawViewportGizmo(g,
+                                      getSelectedGeometryAnchor(object, projected),
+                                      sceneModel.getSelectedGeometryTool(),
+                                      gizmoDragMode);
+                }
             }
 
             g.setColour((selected ? accentColour() : juce::Colour(0xff8e7958)).withAlpha(selected ? 0.92f : 0.68f));
@@ -436,13 +487,25 @@ void EngineerViewportComponent::mouseDown(const juce::MouseEvent& event)
     const auto& selectedObject = sceneModel.getSelectedObject();
     if (selectedObject.authoringState == EngineerSceneModel::AuthoringState::directGeometry)
     {
-        const auto geometryHit = hitTestGeometryElement(event.position, selectedObject, getObjectBounds(selectedObject));
+        const auto objectBounds = getObjectBounds(selectedObject);
+        const auto gizmoHit = hitTestGizmo(event.position, selectedObject, objectBounds);
+        if (gizmoHit.valid)
+        {
+            dragAnchor = event.position;
+            gizmoDragMode = gizmoHit.mode;
+            isDraggingGeometryElement = true;
+            isDraggingObject = false;
+            return;
+        }
+
+        const auto geometryHit = hitTestGeometryElement(event.position, selectedObject, objectBounds);
         if (geometryHit.valid)
         {
             sceneModel.setSelectedGeometryElementKind(geometryHit.kind);
             sceneModel.setSelectedGeometryElementIndex(geometryHit.index);
             dragAnchor = event.position;
             isDraggingGeometryElement = true;
+            gizmoDragMode = GizmoDragMode::elementProxy;
             isDraggingObject = false;
             return;
         }
@@ -464,7 +527,53 @@ void EngineerViewportComponent::mouseDrag(const juce::MouseEvent& event)
         auto deltaPixels = event.position - dragAnchor;
         juce::Point<float> deltaNormalized(deltaPixels.x / sceneBounds.getWidth(),
                                            deltaPixels.y / sceneBounds.getHeight());
-        sceneModel.nudgeSelectedGeometryElement(deltaNormalized);
+
+        switch (gizmoDragMode)
+        {
+            case GizmoDragMode::elementProxy:
+                sceneModel.nudgeSelectedGeometryElement(deltaNormalized);
+                dragAnchor = event.position;
+                return;
+            case GizmoDragMode::xAxis:
+                deltaNormalized.y = 0.0f;
+                break;
+            case GizmoDragMode::yAxis:
+                deltaNormalized.x = 0.0f;
+                break;
+            case GizmoDragMode::planar:
+                break;
+            case GizmoDragMode::depthAxis:
+            {
+                sceneModel.extrudeSelectedDirectGeometry((deltaNormalized.x - deltaNormalized.y) * 0.14f);
+                dragAnchor = event.position;
+                return;
+            }
+            case GizmoDragMode::bevelAxis:
+            {
+                sceneModel.bevelSelectedDirectGeometry((deltaNormalized.x - deltaNormalized.y) * 0.07f);
+                dragAnchor = event.position;
+                return;
+            }
+            case GizmoDragMode::none:
+                break;
+        }
+
+        switch (sceneModel.getSelectedGeometryTool())
+        {
+            case EngineerSceneModel::GeometryTool::translate:
+                sceneModel.nudgeSelectedDirectGeometryPosition(deltaNormalized);
+                break;
+            case EngineerSceneModel::GeometryTool::scale:
+                sceneModel.scaleSelectedDirectGeometry({ deltaNormalized.x, -deltaNormalized.y });
+                break;
+            case EngineerSceneModel::GeometryTool::extrude:
+                sceneModel.extrudeSelectedDirectGeometry((deltaNormalized.x - deltaNormalized.y) * 0.12f);
+                break;
+            case EngineerSceneModel::GeometryTool::bevel:
+                sceneModel.bevelSelectedDirectGeometry((deltaNormalized.x - deltaNormalized.y) * 0.06f);
+                break;
+        }
+
         dragAnchor = event.position;
         return;
     }
@@ -489,6 +598,7 @@ void EngineerViewportComponent::mouseUp(const juce::MouseEvent&)
 {
     isDraggingObject = false;
     isDraggingGeometryElement = false;
+    gizmoDragMode = GizmoDragMode::none;
 }
 
 void EngineerViewportComponent::resized()
@@ -564,6 +674,22 @@ int EngineerViewportComponent::hitTestObject(juce::Point<float> point) const
     return -1;
 }
 
+juce::Point<float> EngineerViewportComponent::getSelectedGeometryAnchor(const EngineerSceneModel::SceneObject&,
+                                                                        juce::Rectangle<float> rect) const
+{
+    switch (sceneModel.getSelectedGeometryElementKind())
+    {
+        case EngineerSceneModel::GeometryElementKind::vertex:
+            return rectangleVertices(rect)[static_cast<size_t>(juce::jlimit(0, 3, sceneModel.getSelectedGeometryElementIndex()))];
+        case EngineerSceneModel::GeometryElementKind::edge:
+            return rectangleEdgeMidpoints(rect)[static_cast<size_t>(juce::jlimit(0, 3, sceneModel.getSelectedGeometryElementIndex()))];
+        case EngineerSceneModel::GeometryElementKind::face:
+            return rect.getCentre();
+    }
+
+    return rect.getCentre();
+}
+
 EngineerViewportComponent::GeometryHit EngineerViewportComponent::hitTestGeometryElement(juce::Point<float> point,
                                                                                          const EngineerSceneModel::SceneObject& object,
                                                                                          juce::Rectangle<float> rect) const
@@ -596,6 +722,46 @@ EngineerViewportComponent::GeometryHit EngineerViewportComponent::hitTestGeometr
 
     if (rect.reduced(10.0f).contains(point))
         return { true, EngineerSceneModel::GeometryElementKind::face, 0 };
+
+    return hit;
+}
+
+EngineerViewportComponent::GizmoHit EngineerViewportComponent::hitTestGizmo(juce::Point<float> point,
+                                                                            const EngineerSceneModel::SceneObject& object,
+                                                                            juce::Rectangle<float> rect) const
+{
+    GizmoHit hit;
+    if (object.authoringState != EngineerSceneModel::AuthoringState::directGeometry)
+        return hit;
+
+    const auto anchor = getSelectedGeometryAnchor(object, rect);
+    const auto tool = sceneModel.getSelectedGeometryTool();
+
+    juce::Rectangle<float> planar(anchor.x - 8.0f, anchor.y - 8.0f, 16.0f, 16.0f);
+    juce::Rectangle<float> xHandle(anchor.x + 24.0f, anchor.y - 8.0f, 16.0f, 16.0f);
+    juce::Rectangle<float> yHandle(anchor.x - 8.0f, anchor.y - 40.0f, 16.0f, 16.0f);
+
+    if (xHandle.contains(point))
+        return { true, GizmoDragMode::xAxis };
+    if (yHandle.contains(point))
+        return { true, GizmoDragMode::yAxis };
+
+    if (tool == EngineerSceneModel::GeometryTool::extrude)
+    {
+        juce::Rectangle<float> depthHandle(anchor.x + 16.0f, anchor.y - 32.0f, 16.0f, 16.0f);
+        if (depthHandle.contains(point))
+            return { true, GizmoDragMode::depthAxis };
+    }
+
+    if (tool == EngineerSceneModel::GeometryTool::bevel)
+    {
+        juce::Rectangle<float> bevelRing(anchor.x - 20.0f, anchor.y - 20.0f, 40.0f, 40.0f);
+        if (bevelRing.contains(point) && !planar.reduced(2.0f).contains(point))
+            return { true, GizmoDragMode::bevelAxis };
+    }
+
+    if (planar.contains(point))
+        return { true, GizmoDragMode::planar };
 
     return hit;
 }
