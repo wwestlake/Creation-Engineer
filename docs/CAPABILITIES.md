@@ -179,6 +179,8 @@ The first viewport gizmo pass should also support:
 - axis-constrained scaling handles
 - dedicated extrusion and bevel handles
 - planar center-handle dragging for whole-part direct-geometry movement
+- snapping enable/disable control
+- selectable numeric snap increments for geometry edits
 
 ## Modifier Stack Workflow
 

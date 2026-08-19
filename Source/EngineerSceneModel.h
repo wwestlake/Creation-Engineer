@@ -93,6 +93,10 @@ public:
     bool isSelectedObjectDirectGeometry() const noexcept;
     GeometryTool getSelectedGeometryTool() const noexcept;
     void setSelectedGeometryTool(GeometryTool tool) noexcept;
+    bool isGeometrySnappingEnabled() const noexcept;
+    void setGeometrySnappingEnabled(bool enabled) noexcept;
+    float getGeometrySnapStep() const noexcept;
+    void setGeometrySnapStep(float step) noexcept;
     GeometryElementKind getSelectedGeometryElementKind() const noexcept;
     void setSelectedGeometryElementKind(GeometryElementKind kind) noexcept;
     int getSelectedGeometryElementIndex() const noexcept;
@@ -120,11 +124,15 @@ private:
     SceneObject& getSelectedObjectMutable() noexcept;
     void syncDerivedState(SceneObject& object) noexcept;
     void clampDirectGeometryObject(SceneObject& object) noexcept;
+    juce::Point<float> snapDelta(juce::Point<float> delta) const noexcept;
+    float snapScalar(float value) const noexcept;
     void notifyListeners();
 
     std::vector<SceneObject> objects;
     int selectedObjectIndex = 0;
     GeometryTool selectedGeometryTool = GeometryTool::translate;
+    bool geometrySnappingEnabled = true;
+    float geometrySnapStep = 0.01f;
     GeometryElementKind selectedGeometryElementKind = GeometryElementKind::vertex;
     int selectedGeometryElementIndex = 0;
     CameraPreset cameraPreset = CameraPreset::iso;

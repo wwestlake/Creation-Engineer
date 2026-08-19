@@ -28,9 +28,11 @@ EngineerGeometryToolsComponent::EngineerGeometryToolsComponent(EngineerSceneMode
     modeLabel.setColour(juce::Label::textColourId, juce::Colours::white);
     depthLabel.setColour(juce::Label::textColourId, juce::Colour(0xffaebed0));
     bevelLabel.setColour(juce::Label::textColourId, juce::Colour(0xffaebed0));
+    snapLabel.setColour(juce::Label::textColourId, juce::Colour(0xffaebed0));
     addAndMakeVisible(modeLabel);
     addAndMakeVisible(depthLabel);
     addAndMakeVisible(bevelLabel);
+    addAndMakeVisible(snapLabel);
 
     auto wireButton = [this](juce::TextButton& button)
     {
@@ -42,6 +44,18 @@ EngineerGeometryToolsComponent::EngineerGeometryToolsComponent(EngineerSceneMode
     wireButton(scaleButton);
     wireButton(extrudeButton);
     wireButton(bevelButton);
+
+    snapToggle.setColour(juce::ToggleButton::textColourId, juce::Colours::white);
+    snapToggle.onClick = [this] { toggleSnapping(); };
+    addAndMakeVisible(snapToggle);
+
+    snapStepBox.addItem("2.5 mm", 1);
+    snapStepBox.addItem("5 mm", 2);
+    snapStepBox.addItem("10 mm", 3);
+    snapStepBox.addItem("25 mm", 4);
+    snapStepBox.onChange = [this] { setSnapStep(); };
+    addAndMakeVisible(snapStepBox);
+
     wireButton(leftButton);
     wireButton(rightButton);
     wireButton(upButton);
@@ -90,6 +104,7 @@ void EngineerGeometryToolsComponent::resized()
     modeLabel.setBounds(area.removeFromTop(22));
     depthLabel.setBounds(area.removeFromTop(20));
     bevelLabel.setBounds(area.removeFromTop(20));
+    snapLabel.setBounds(area.removeFromTop(20));
     area.removeFromTop(10);
 
     auto toolRow = area.removeFromTop(28);
@@ -100,6 +115,12 @@ void EngineerGeometryToolsComponent::resized()
     extrudeButton.setBounds(toolRow.removeFromLeft(78));
     toolRow.removeFromLeft(6);
     bevelButton.setBounds(toolRow.removeFromLeft(72));
+    area.removeFromTop(10);
+
+    auto snapRow = area.removeFromTop(28);
+    snapToggle.setBounds(snapRow.removeFromLeft(118));
+    snapRow.removeFromLeft(8);
+    snapStepBox.setBounds(snapRow.removeFromLeft(110));
     area.removeFromTop(10);
 
     auto moveRowOne = area.removeFromTop(28);
@@ -146,11 +167,21 @@ void EngineerGeometryToolsComponent::refreshFromScene()
                        juce::dontSendNotification);
     bevelLabel.setText("Bevel amount: " + juce::String(object.bevelAmount * 100.0f, 1) + " mm",
                        juce::dontSendNotification);
+    snapLabel.setText("Snap step: " + juce::String(sceneModel.getGeometrySnapStep() * 1000.0f, 1) + " mm"
+                      + "   |   Snapping: " + juce::String(sceneModel.isGeometrySnappingEnabled() ? "On" : "Off"),
+                      juce::dontSendNotification);
 
     translateButton.setToggleState(sceneModel.getSelectedGeometryTool() == EngineerSceneModel::GeometryTool::translate, juce::dontSendNotification);
     scaleButton.setToggleState(sceneModel.getSelectedGeometryTool() == EngineerSceneModel::GeometryTool::scale, juce::dontSendNotification);
     extrudeButton.setToggleState(sceneModel.getSelectedGeometryTool() == EngineerSceneModel::GeometryTool::extrude, juce::dontSendNotification);
     bevelButton.setToggleState(sceneModel.getSelectedGeometryTool() == EngineerSceneModel::GeometryTool::bevel, juce::dontSendNotification);
+    snapToggle.setToggleState(sceneModel.isGeometrySnappingEnabled(), juce::dontSendNotification);
+
+    const auto step = sceneModel.getGeometrySnapStep();
+    if (step <= 0.0026f) snapStepBox.setSelectedId(1, juce::dontSendNotification);
+    else if (step <= 0.0051f) snapStepBox.setSelectedId(2, juce::dontSendNotification);
+    else if (step <= 0.0101f) snapStepBox.setSelectedId(3, juce::dontSendNotification);
+    else snapStepBox.setSelectedId(4, juce::dontSendNotification);
 
     leftButton.setEnabled(geometryMode);
     rightButton.setEnabled(geometryMode);
@@ -162,11 +193,30 @@ void EngineerGeometryToolsComponent::refreshFromScene()
     extrudeLessButton.setEnabled(geometryMode);
     bevelMoreButton.setEnabled(geometryMode);
     bevelLessButton.setEnabled(geometryMode);
+    snapToggle.setEnabled(geometryMode);
+    snapStepBox.setEnabled(geometryMode && sceneModel.isGeometrySnappingEnabled());
 }
 
 void EngineerGeometryToolsComponent::selectTool(EngineerSceneModel::GeometryTool tool)
 {
     sceneModel.setSelectedGeometryTool(tool);
+}
+
+void EngineerGeometryToolsComponent::toggleSnapping()
+{
+    sceneModel.setGeometrySnappingEnabled(snapToggle.getToggleState());
+}
+
+void EngineerGeometryToolsComponent::setSnapStep()
+{
+    switch (snapStepBox.getSelectedId())
+    {
+        case 1: sceneModel.setGeometrySnapStep(0.0025f); break;
+        case 2: sceneModel.setGeometrySnapStep(0.005f); break;
+        case 3: sceneModel.setGeometrySnapStep(0.01f); break;
+        case 4: sceneModel.setGeometrySnapStep(0.025f); break;
+        default: break;
+    }
 }
 
 void EngineerGeometryToolsComponent::nudgeLeft()
