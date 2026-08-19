@@ -461,6 +461,7 @@ Required direction:
 - precise 3D viewing for engineered models
 - a real scene-based viewport rather than a painted 2D proxy
 - selectable model components and technical overlays
+- visible 3D gizmos for explicit axis-based interaction
 - technical display modes rather than purely artistic shading
 - immediate visual response to parameter or solver changes
 - result overlays such as annotations, guides, vectors, states, or field views

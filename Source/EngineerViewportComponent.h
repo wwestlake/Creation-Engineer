@@ -19,6 +19,15 @@ public:
         planarLayer
     };
 
+    enum class GizmoDragMode
+    {
+        none,
+        planar,
+        axisX,
+        axisY,
+        axisZ
+    };
+
     explicit EngineerViewportComponent(EngineerSceneModel& sceneModel);
     ~EngineerViewportComponent() override;
 
@@ -37,6 +46,14 @@ private:
         int index = -1;
         juce::Rectangle<float> screenBounds;
         juce::Point<float> screenCentre;
+    };
+
+    struct GizmoProjection
+    {
+        juce::Point<float> centre;
+        juce::Point<float> axisX;
+        juce::Point<float> axisY;
+        juce::Point<float> axisZ;
     };
 
     struct MeshBuffer
@@ -78,7 +95,10 @@ private:
     void renderObject(const EngineerSceneModel::SceneObject& object,
                       bool selected,
                       bool mirrored) const;
+    void drawOverlayGizmo(juce::Graphics& g) const;
     int hitTestObject(juce::Point<float> point) const;
+    GizmoDragMode hitTestGizmo(juce::Point<float> point) const;
+    GizmoProjection buildSelectedGizmoProjection() const;
     std::vector<ProjectedObjectBounds> buildProjectedObjectBounds() const;
     void updateViewMatrices();
 
@@ -92,6 +112,8 @@ private:
 
     juce::Point<float> dragAnchor;
     bool isNavigatingView = false;
+    bool isDraggingGizmo = false;
+    GizmoDragMode gizmoDragMode = GizmoDragMode::none;
     juce::Vector3D<float> orbitTarget { 0.0f, 0.0f, 0.0f };
     float orbitDistance = 18.0f;
     float yawRadians = 0.72f;
