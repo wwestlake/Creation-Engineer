@@ -173,6 +173,13 @@ These proxies give Engineer an engineering-friendly bridge toward fuller
 vertex/edge/face editing without pretending the full mesh editor is already
 finished.
 
+The first viewport gizmo pass should also support:
+
+- axis-constrained translation handles
+- axis-constrained scaling handles
+- dedicated extrusion and bevel handles
+- planar center-handle dragging for whole-part direct-geometry movement
+
 ## Modifier Stack Workflow
 
 Creation Engineer should also support a modifier-style workflow similar in

@@ -13,6 +13,17 @@ public:
         assemblyFloor
     };
 
+    enum class GizmoDragMode
+    {
+        none,
+        elementProxy,
+        planar,
+        xAxis,
+        yAxis,
+        depthAxis,
+        bevelAxis
+    };
+
     explicit EngineerViewportComponent(EngineerSceneModel& sceneModel);
     ~EngineerViewportComponent() override;
 
@@ -32,14 +43,25 @@ private:
         int index = 0;
     };
 
+    struct GizmoHit
+    {
+        bool valid = false;
+        GizmoDragMode mode = GizmoDragMode::none;
+    };
+
     void engineerSceneModelChanged() override;
     juce::Rectangle<float> getViewportBounds() const;
     juce::Rectangle<float> getSceneBounds() const;
     juce::Rectangle<float> getObjectBounds(const EngineerSceneModel::SceneObject& object) const;
     int hitTestObject(juce::Point<float> point) const;
+    juce::Point<float> getSelectedGeometryAnchor(const EngineerSceneModel::SceneObject& object,
+                                                 juce::Rectangle<float> rect) const;
     GeometryHit hitTestGeometryElement(juce::Point<float> point,
                                        const EngineerSceneModel::SceneObject& object,
                                        juce::Rectangle<float> rect) const;
+    GizmoHit hitTestGizmo(juce::Point<float> point,
+                          const EngineerSceneModel::SceneObject& object,
+                          juce::Rectangle<float> rect) const;
     void configureButton(juce::TextButton& button);
     void updateModeButtons();
     void updatePrimitiveButtons();
@@ -51,6 +73,7 @@ private:
     EngineerSceneModel& sceneModel;
     bool isDraggingObject = false;
     bool isDraggingGeometryElement = false;
+    GizmoDragMode gizmoDragMode = GizmoDragMode::none;
     juce::Point<float> dragAnchor;
     juce::Point<float> dragStartPosition;
 

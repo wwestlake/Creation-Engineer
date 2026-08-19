@@ -256,6 +256,10 @@ That layer should not be dock-panel-only. The viewport itself should allow the
 user to pick the active proxy directly and drag it as part of the direct
 geometry workflow.
 
+The next viewport step should expose visible gizmo handles so direct geometry
+operations can be constrained along meaningful axes instead of relying only on
+free dragging.
+
 That lets the workstation begin element-level editing before a fuller mesh or
 solid-editing system arrives.
 
