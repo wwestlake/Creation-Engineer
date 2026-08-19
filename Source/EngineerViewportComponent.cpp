@@ -1,199 +1,323 @@
 #include "EngineerViewportComponent.h"
 
 #include <array>
+#include <cmath>
+
+using namespace juce::gl;
 
 namespace
 {
-juce::Colour panelFill() noexcept { return juce::Colour(0xff101722); }
-juce::Colour frameColour() noexcept { return juce::Colour(0xff2d3e55); }
-juce::Colour accentColour() noexcept { return juce::Colour(0xffffa247); }
-juce::Colour cyanAccent() noexcept { return juce::Colour(0xff59d0ff); }
-juce::Colour xAxisColour() noexcept { return juce::Colour(0xffff6b6b); }
-juce::Colour yAxisColour() noexcept { return juce::Colour(0xff5ae08a); }
+constexpr float kPi = 3.1415926535f;
 
-void drawSceneGrid(juce::Graphics& g, juce::Rectangle<float> area)
+struct Vec3
 {
-    g.setColour(juce::Colour(0x223d556f));
+    float x = 0.0f;
+    float y = 0.0f;
+    float z = 0.0f;
+};
 
-    const float step = 24.0f;
-    for (float x = area.getX(); x <= area.getRight(); x += step)
-        g.drawVerticalLine(juce::roundToInt(x), area.getY(), area.getBottom());
-
-    for (float y = area.getY(); y <= area.getBottom(); y += step)
-        g.drawHorizontalLine(juce::roundToInt(y), area.getX(), area.getRight());
-}
-
-juce::String cameraLabel(EngineerSceneModel::CameraPreset preset)
+struct Vec4
 {
-    switch (preset)
-    {
-        case EngineerSceneModel::CameraPreset::iso: return "ISO";
-        case EngineerSceneModel::CameraPreset::top: return "Top";
-        case EngineerSceneModel::CameraPreset::walk: return "Walk";
-    }
+    float x = 0.0f;
+    float y = 0.0f;
+    float z = 0.0f;
+    float w = 1.0f;
+};
 
-    return "ISO";
-}
+using Mat4 = std::array<float, 16>;
 
-juce::Rectangle<float> normalizedRectToBounds(juce::Rectangle<float> bounds,
-                                              juce::Point<float> center,
-                                              juce::Point<float> size)
-{
-    auto width = bounds.getWidth() * size.x;
-    auto height = bounds.getHeight() * size.y;
-    auto x = bounds.getX() + bounds.getWidth() * center.x - width * 0.5f;
-    auto y = bounds.getY() + bounds.getHeight() * center.y - height * 0.5f;
-    return { x, y, width, height };
-}
+Vec3 operator+(Vec3 a, Vec3 b) { return { a.x + b.x, a.y + b.y, a.z + b.z }; }
+Vec3 operator-(Vec3 a, Vec3 b) { return { a.x - b.x, a.y - b.y, a.z - b.z }; }
+Vec3 operator*(Vec3 a, float s) { return { a.x * s, a.y * s, a.z * s }; }
 
-juce::Rectangle<float> projectForAssemblyFloor(juce::Rectangle<float> rect,
-                                               juce::Point<float> center)
-{
-    return rect.translated((center.x - 0.5f) * 30.0f,
-                           (center.y - 0.5f) * 24.0f);
-}
+float dot(Vec3 a, Vec3 b) { return a.x * b.x + a.y * b.y + a.z * b.z; }
 
-juce::Rectangle<float> mirroredRectX(juce::Rectangle<float> sceneBounds,
-                                     juce::Rectangle<float> rect)
-{
-    const auto mirroredX = sceneBounds.getCentreX() - (rect.getCentreX() - sceneBounds.getCentreX());
-    auto mirrored = rect;
-    mirrored.setCentre(mirroredX, rect.getCentreY());
-    return mirrored;
-}
-
-void drawDirectGeometryOverlay(juce::Graphics& g,
-                               juce::Rectangle<float> rect,
-                               float depth,
-                               float bevelAmount,
-                               bool selected)
-{
-    auto offset = juce::Point<float>(depth * 180.0f, -depth * 120.0f);
-    auto rear = rect.translated(offset.x, offset.y);
-
-    g.setColour(juce::Colour(0x2259d0ff));
-    g.fillRoundedRectangle(rear, 10.0f);
-    g.setColour(juce::Colour(0xff59d0ff).withAlpha(selected ? 0.75f : 0.45f));
-    g.drawRoundedRectangle(rear, 10.0f, 1.0f);
-
-    g.setColour(juce::Colour(0xff59d0ff).withAlpha(selected ? 0.7f : 0.4f));
-    g.drawLine(juce::Line<float>(rect.getTopLeft(), rear.getTopLeft()), selected ? 1.8f : 1.0f);
-    g.drawLine(juce::Line<float>(rect.getTopRight(), rear.getTopRight()), selected ? 1.8f : 1.0f);
-    g.drawLine(juce::Line<float>(rect.getBottomLeft(), rear.getBottomLeft()), selected ? 1.8f : 1.0f);
-    g.drawLine(juce::Line<float>(rect.getBottomRight(), rear.getBottomRight()), selected ? 1.8f : 1.0f);
-
-    if (bevelAmount > 0.0f)
-    {
-        auto inset = rect.reduced(bevelAmount * rect.getWidth(), bevelAmount * rect.getHeight());
-        g.setColour(juce::Colour(0xffffd27a).withAlpha(selected ? 0.85f : 0.50f));
-        g.drawRoundedRectangle(inset, 8.0f, selected ? 1.8f : 1.0f);
-    }
-}
-
-std::array<juce::Point<float>, 4> rectangleVertices(const juce::Rectangle<float>& rect)
+Vec3 cross(Vec3 a, Vec3 b)
 {
     return {
-        rect.getTopLeft(),
-        rect.getTopRight(),
-        rect.getBottomRight(),
-        rect.getBottomLeft()
+        a.y * b.z - a.z * b.y,
+        a.z * b.x - a.x * b.z,
+        a.x * b.y - a.y * b.x
     };
 }
 
-std::array<juce::Point<float>, 4> rectangleEdgeMidpoints(const juce::Rectangle<float>& rect)
+Vec3 normalise(Vec3 v)
+{
+    const auto length = std::sqrt(dot(v, v));
+    if (length <= 0.0001f)
+        return { 0.0f, 0.0f, 0.0f };
+
+    return { v.x / length, v.y / length, v.z / length };
+}
+
+Mat4 identityMatrix()
 {
     return {
-        juce::Point<float>(rect.getCentreX(), rect.getY()),
-        juce::Point<float>(rect.getRight(), rect.getCentreY()),
-        juce::Point<float>(rect.getCentreX(), rect.getBottom()),
-        juce::Point<float>(rect.getX(), rect.getCentreY())
+        1, 0, 0, 0,
+        0, 1, 0, 0,
+        0, 0, 1, 0,
+        0, 0, 0, 1
     };
 }
 
-void drawGeometryElementProxies(juce::Graphics& g,
-                                juce::Rectangle<float> rect,
-                                EngineerSceneModel::GeometryElementKind selectedKind,
-                                int selectedIndex)
+Mat4 multiply(Mat4 a, Mat4 b)
 {
-    const auto vertices = rectangleVertices(rect);
-    const auto midpoints = rectangleEdgeMidpoints(rect);
-    const auto faceRect = rect.reduced(8.0f);
+    Mat4 result {};
+    for (int column = 0; column < 4; ++column)
+        for (int row = 0; row < 4; ++row)
+            result[static_cast<size_t>(column * 4 + row)] =
+                a[static_cast<size_t>(0 * 4 + row)] * b[static_cast<size_t>(column * 4 + 0)] +
+                a[static_cast<size_t>(1 * 4 + row)] * b[static_cast<size_t>(column * 4 + 1)] +
+                a[static_cast<size_t>(2 * 4 + row)] * b[static_cast<size_t>(column * 4 + 2)] +
+                a[static_cast<size_t>(3 * 4 + row)] * b[static_cast<size_t>(column * 4 + 3)];
 
-    for (int i = 0; i < 4; ++i)
-    {
-        const bool selected = selectedKind == EngineerSceneModel::GeometryElementKind::vertex && selectedIndex == i;
-        g.setColour(juce::Colour(0xffffd27a).withAlpha(selected ? 1.0f : 0.55f));
-        const auto point = vertices[static_cast<size_t>(i)];
-        g.fillEllipse(point.x - (selected ? 6.0f : 4.0f),
-                      point.y - (selected ? 6.0f : 4.0f),
-                      selected ? 12.0f : 8.0f,
-                      selected ? 12.0f : 8.0f);
-    }
-
-    for (int i = 0; i < 4; ++i)
-    {
-        const bool selected = selectedKind == EngineerSceneModel::GeometryElementKind::edge && selectedIndex == i;
-        g.setColour(juce::Colour(0xff59d0ff).withAlpha(selected ? 1.0f : 0.50f));
-        const auto point = midpoints[static_cast<size_t>(i)];
-        juce::Rectangle<float> handle(point.x - (selected ? 10.0f : 8.0f),
-                                      point.y - (selected ? 5.0f : 4.0f),
-                                      selected ? 20.0f : 16.0f,
-                                      selected ? 10.0f : 8.0f);
-        g.fillRoundedRectangle(handle, 3.0f);
-    }
-
-    g.setColour(juce::Colour(0xffcfe8ff).withAlpha(selectedKind == EngineerSceneModel::GeometryElementKind::face ? 0.90f : 0.35f));
-    g.drawRoundedRectangle(faceRect, 8.0f, selectedKind == EngineerSceneModel::GeometryElementKind::face ? 2.2f : 1.0f);
+    return result;
 }
 
-void drawViewportGizmo(juce::Graphics& g,
-                       juce::Point<float> anchor,
-                       EngineerSceneModel::GeometryTool tool,
-                       EngineerViewportComponent::GizmoDragMode activeMode)
+Vec4 multiply(Mat4 m, Vec4 v)
 {
-    const float axisLength = 34.0f;
-    const float handleRadius = 5.0f;
-
-    auto xEnd = juce::Point<float>(anchor.x + axisLength, anchor.y);
-    auto yEnd = juce::Point<float>(anchor.x, anchor.y - axisLength);
-
-    g.setColour(xAxisColour().withAlpha(activeMode == EngineerViewportComponent::GizmoDragMode::xAxis ? 1.0f : 0.82f));
-    g.drawArrow(juce::Line<float>(anchor, xEnd), 2.6f, 10.0f, 8.0f);
-    g.fillEllipse(xEnd.x - handleRadius, xEnd.y - handleRadius, handleRadius * 2.0f, handleRadius * 2.0f);
-
-    g.setColour(yAxisColour().withAlpha(activeMode == EngineerViewportComponent::GizmoDragMode::yAxis ? 1.0f : 0.82f));
-    g.drawArrow(juce::Line<float>(anchor, yEnd), 2.6f, 10.0f, 8.0f);
-    g.fillEllipse(yEnd.x - handleRadius, yEnd.y - handleRadius, handleRadius * 2.0f, handleRadius * 2.0f);
-
-    g.setColour(cyanAccent().withAlpha(activeMode == EngineerViewportComponent::GizmoDragMode::planar ? 0.95f : 0.65f));
-    g.fillRoundedRectangle(juce::Rectangle<float>(anchor.x - 7.0f, anchor.y - 7.0f, 14.0f, 14.0f), 4.0f);
-
-    if (tool == EngineerSceneModel::GeometryTool::extrude)
-    {
-        auto depthEnd = juce::Point<float>(anchor.x + 24.0f, anchor.y - 24.0f);
-        g.setColour(accentColour().withAlpha(activeMode == EngineerViewportComponent::GizmoDragMode::depthAxis ? 1.0f : 0.82f));
-        g.drawArrow(juce::Line<float>(anchor, depthEnd), 2.2f, 9.0f, 7.0f);
-        g.fillEllipse(depthEnd.x - 4.0f, depthEnd.y - 4.0f, 8.0f, 8.0f);
-    }
-
-    if (tool == EngineerSceneModel::GeometryTool::bevel)
-    {
-        g.setColour(accentColour().withAlpha(activeMode == EngineerViewportComponent::GizmoDragMode::bevelAxis ? 1.0f : 0.82f));
-        g.drawEllipse(anchor.x - 18.0f, anchor.y - 18.0f, 36.0f, 36.0f, 2.2f);
-    }
+    return {
+        m[0] * v.x + m[4] * v.y + m[8] * v.z + m[12] * v.w,
+        m[1] * v.x + m[5] * v.y + m[9] * v.z + m[13] * v.w,
+        m[2] * v.x + m[6] * v.y + m[10] * v.z + m[14] * v.w,
+        m[3] * v.x + m[7] * v.y + m[11] * v.z + m[15] * v.w
+    };
 }
 
-void drawObjectMoveHandle(juce::Graphics& g, juce::Rectangle<float> rect, bool selected)
+Mat4 translationMatrix(Vec3 t)
 {
-    const auto centre = rect.getCentre();
-    const auto handleRect = juce::Rectangle<float>(centre.x - 9.0f, centre.y - 9.0f, 18.0f, 18.0f);
+    auto m = identityMatrix();
+    m[12] = t.x;
+    m[13] = t.y;
+    m[14] = t.z;
+    return m;
+}
 
-    g.setColour(cyanAccent().withAlpha(selected ? 0.92f : 0.62f));
-    g.fillRoundedRectangle(handleRect, 5.0f);
-    g.setColour(juce::Colours::white.withAlpha(selected ? 0.90f : 0.55f));
-    g.drawRoundedRectangle(handleRect, 5.0f, selected ? 1.6f : 1.0f);
-    g.drawLine(centre.x - 5.0f, centre.y, centre.x + 5.0f, centre.y, selected ? 1.8f : 1.2f);
-    g.drawLine(centre.x, centre.y - 5.0f, centre.x, centre.y + 5.0f, selected ? 1.8f : 1.2f);
+Mat4 scaleMatrix(Vec3 s)
+{
+    return {
+        s.x, 0, 0, 0,
+        0, s.y, 0, 0,
+        0, 0, s.z, 0,
+        0, 0, 0, 1
+    };
+}
+
+Mat4 perspectiveMatrix(float fovRadians, float aspect, float nearPlane, float farPlane)
+{
+    const auto f = 1.0f / std::tan(fovRadians * 0.5f);
+    Mat4 m {};
+    m[0] = f / aspect;
+    m[5] = f;
+    m[10] = (farPlane + nearPlane) / (nearPlane - farPlane);
+    m[11] = -1.0f;
+    m[14] = (2.0f * farPlane * nearPlane) / (nearPlane - farPlane);
+    return m;
+}
+
+Mat4 orthographicMatrix(float left, float right, float bottom, float top, float nearPlane, float farPlane)
+{
+    Mat4 m = identityMatrix();
+    m[0] = 2.0f / (right - left);
+    m[5] = 2.0f / (top - bottom);
+    m[10] = -2.0f / (farPlane - nearPlane);
+    m[12] = -(right + left) / (right - left);
+    m[13] = -(top + bottom) / (top - bottom);
+    m[14] = -(farPlane + nearPlane) / (farPlane - nearPlane);
+    return m;
+}
+
+Mat4 lookAtMatrix(Vec3 eye, Vec3 target, Vec3 up)
+{
+    const auto forward = normalise(target - eye);
+    const auto side = normalise(cross(forward, up));
+    const auto correctedUp = cross(side, forward);
+
+    Mat4 m = identityMatrix();
+    m[0] = side.x;
+    m[1] = correctedUp.x;
+    m[2] = -forward.x;
+    m[4] = side.y;
+    m[5] = correctedUp.y;
+    m[6] = -forward.y;
+    m[8] = side.z;
+    m[9] = correctedUp.z;
+    m[10] = -forward.z;
+    m[12] = -dot(side, eye);
+    m[13] = -dot(correctedUp, eye);
+    m[14] = dot(forward, eye);
+    return m;
+}
+
+Vec3 objectCentreFor(const EngineerSceneModel::SceneObject& object, bool mirrored)
+{
+    auto x = (object.normalizedPosition.x - 0.5f) * 22.0f;
+    const auto z = (object.normalizedPosition.y - 0.5f) * 16.0f;
+    if (mirrored)
+        x = -x;
+
+    float height = 1.0f;
+    if (object.primitiveType.equalsIgnoreCase("Plate"))
+        height = 0.30f + object.geometryDepth * 8.0f;
+    else if (object.primitiveType.equalsIgnoreCase("Cylinder"))
+        height = 1.2f + object.normalizedSize.y * 4.5f;
+    else
+        height = 1.4f + object.geometryDepth * 5.0f;
+
+    return { x, height * 0.5f, z };
+}
+
+Vec3 objectScaleFor(const EngineerSceneModel::SceneObject& object)
+{
+    if (object.primitiveType.equalsIgnoreCase("Cylinder"))
+    {
+        const auto radius = 0.55f + object.normalizedSize.x * 4.8f;
+        const auto height = 1.2f + object.normalizedSize.y * 4.5f;
+        return { radius, height * 0.5f, radius };
+    }
+
+    if (object.primitiveType.equalsIgnoreCase("Plate"))
+        return { 1.1f + object.normalizedSize.x * 8.5f, 0.20f + object.geometryDepth * 4.0f, 0.8f + object.normalizedSize.y * 5.0f };
+
+    return { 1.0f + object.normalizedSize.x * 8.0f, 0.9f + object.geometryDepth * 3.5f, 0.8f + object.normalizedSize.y * 5.5f };
+}
+
+Mat4 objectModelMatrix(const EngineerSceneModel::SceneObject& object, bool mirrored)
+{
+    return multiply(translationMatrix(objectCentreFor(object, mirrored)), scaleMatrix(objectScaleFor(object)));
+}
+
+std::vector<float> makeBoxVertices()
+{
+    std::vector<float> vertices;
+
+    auto pushVertex = [&vertices](Vec3 p, Vec3 n)
+    {
+        vertices.push_back(p.x);
+        vertices.push_back(p.y);
+        vertices.push_back(p.z);
+        vertices.push_back(n.x);
+        vertices.push_back(n.y);
+        vertices.push_back(n.z);
+    };
+
+    auto pushFace = [&pushVertex](Vec3 a, Vec3 b, Vec3 c, Vec3 d, Vec3 n)
+    {
+        pushVertex(a, n);
+        pushVertex(b, n);
+        pushVertex(c, n);
+        pushVertex(a, n);
+        pushVertex(c, n);
+        pushVertex(d, n);
+    };
+
+    pushFace({ -1, -1,  1 }, {  1, -1,  1 }, {  1,  1,  1 }, { -1,  1,  1 }, {  0,  0,  1 });
+    pushFace({ -1, -1, -1 }, { -1,  1, -1 }, {  1,  1, -1 }, {  1, -1, -1 }, {  0,  0, -1 });
+    pushFace({ -1, -1, -1 }, { -1, -1,  1 }, { -1,  1,  1 }, { -1,  1, -1 }, { -1,  0,  0 });
+    pushFace({  1, -1, -1 }, {  1,  1, -1 }, {  1,  1,  1 }, {  1, -1,  1 }, {  1,  0,  0 });
+    pushFace({ -1,  1, -1 }, { -1,  1,  1 }, {  1,  1,  1 }, {  1,  1, -1 }, {  0,  1,  0 });
+    pushFace({ -1, -1, -1 }, {  1, -1, -1 }, {  1, -1,  1 }, { -1, -1,  1 }, {  0, -1,  0 });
+
+    return vertices;
+}
+
+std::vector<float> makeCylinderVertices()
+{
+    std::vector<float> vertices;
+    constexpr int segments = 24;
+    for (int i = 0; i < segments; ++i)
+    {
+        const auto a0 = (static_cast<float>(i) / static_cast<float>(segments)) * 2.0f * kPi;
+        const auto a1 = (static_cast<float>(i + 1) / static_cast<float>(segments)) * 2.0f * kPi;
+        const Vec3 p0 { std::cos(a0), -1.0f, std::sin(a0) };
+        const Vec3 p1 { std::cos(a1), -1.0f, std::sin(a1) };
+        const Vec3 p2 { std::cos(a1),  1.0f, std::sin(a1) };
+        const Vec3 p3 { std::cos(a0),  1.0f, std::sin(a0) };
+        const Vec3 n0 { std::cos(a0), 0.0f, std::sin(a0) };
+        const Vec3 n1 { std::cos(a1), 0.0f, std::sin(a1) };
+
+        const std::array<float, 72> side {
+            p0.x, p0.y, p0.z, n0.x, n0.y, n0.z,  p1.x, p1.y, p1.z, n1.x, n1.y, n1.z,  p2.x, p2.y, p2.z, n1.x, n1.y, n1.z,
+            p0.x, p0.y, p0.z, n0.x, n0.y, n0.z,  p2.x, p2.y, p2.z, n1.x, n1.y, n1.z,  p3.x, p3.y, p3.z, n0.x, n0.y, n0.z
+        };
+        vertices.insert(vertices.end(), side.begin(), side.end());
+
+        const std::array<float, 36> top {
+            0.0f,  1.0f, 0.0f, 0.0f, 1.0f, 0.0f,  p3.x, p3.y, p3.z, 0.0f, 1.0f, 0.0f,  p2.x, p2.y, p2.z, 0.0f, 1.0f, 0.0f
+        };
+        vertices.insert(vertices.end(), top.begin(), top.end());
+
+        const std::array<float, 36> bottom {
+            0.0f, -1.0f, 0.0f, 0.0f, -1.0f, 0.0f,  p1.x, p1.y, p1.z, 0.0f, -1.0f, 0.0f,  p0.x, p0.y, p0.z, 0.0f, -1.0f, 0.0f
+        };
+        vertices.insert(vertices.end(), bottom.begin(), bottom.end());
+    }
+
+    return vertices;
+}
+
+std::vector<float> makeGridVertices()
+{
+    std::vector<float> vertices;
+    for (int line = -20; line <= 20; ++line)
+    {
+        const auto axis = line == 0 ? 1.0f : 0.0f;
+        const auto d = static_cast<float>(line);
+        const std::array<float, 24> a {
+            -20.0f, 0.0f, d, 0.0f, 1.0f, axis,  20.0f, 0.0f, d, 0.0f, 1.0f, axis,
+             d, 0.0f, -20.0f, axis, 1.0f, 0.0f, d, 0.0f, 20.0f, axis, 1.0f, 0.0f
+        };
+        vertices.insert(vertices.end(), a.begin(), a.end());
+    }
+
+    return vertices;
+}
+
+juce::Colour objectColour(const EngineerSceneModel::SceneObject& object, bool selected, bool mirrored)
+{
+    auto colour = juce::Colour(0xff7ea0c7);
+    if (object.primitiveType.equalsIgnoreCase("Cylinder"))
+        colour = juce::Colour(0xff8e7c58);
+    else if (object.primitiveType.equalsIgnoreCase("Plate"))
+        colour = juce::Colour(0xff4da0cc);
+
+    if (object.authoringState == EngineerSceneModel::AuthoringState::directGeometry)
+        colour = juce::Colour(0xffd6a250);
+
+    if (mirrored)
+        colour = colour.withMultipliedAlpha(0.28f);
+    else if (selected)
+        colour = colour.brighter(0.55f);
+
+    return colour;
+}
+
+juce::Rectangle<float> viewportRectFor(const juce::Component& component)
+{
+    return component.getLocalBounds().toFloat();
+}
+
+juce::Point<float> toScreenPoint(Vec4 clip, juce::Rectangle<float> area)
+{
+    const auto invW = 1.0f / clip.w;
+    const auto ndcX = clip.x * invW;
+    const auto ndcY = clip.y * invW;
+    return {
+        area.getX() + (ndcX * 0.5f + 0.5f) * area.getWidth(),
+        area.getY() + (1.0f - (ndcY * 0.5f + 0.5f)) * area.getHeight()
+    };
+}
+
+juce::String viewModeLabel(EngineerViewportComponent::ViewMode mode)
+{
+    switch (mode)
+    {
+        case EngineerViewportComponent::ViewMode::design3D: return "3D Design";
+        case EngineerViewportComponent::ViewMode::assemblyFloor: return "Assembly Floor";
+        case EngineerViewportComponent::ViewMode::planarLayer: return "Planar Layer";
+    }
+
+    return "3D Design";
 }
 }
 
@@ -202,301 +326,40 @@ EngineerViewportComponent::EngineerViewportComponent(EngineerSceneModel& model)
 {
     sceneModel.addListener(this);
     applyCameraPreset(sceneModel.getCameraPreset());
-    updateModeButtons();
-    updatePrimitiveButtons();
-    updateCameraButtons();
-    updateObjectButtons();
+
+    openGLContext.setOpenGLVersionRequired(juce::OpenGLContext::openGL4_1);
+    openGLContext.setRenderer(this);
+    openGLContext.setContinuousRepainting(true);
+    openGLContext.attachTo(*this);
 }
 
 EngineerViewportComponent::~EngineerViewportComponent()
 {
+    openGLContext.detach();
     sceneModel.removeListener(this);
-}
-
-void EngineerViewportComponent::engineerSceneModelChanged()
-{
-    selectedPrimitive = sceneModel.getSelectedObject().primitiveType;
-    if (!isNavigatingView)
-        applyCameraPreset(sceneModel.getCameraPreset());
-    updateCameraButtons();
-    updatePrimitiveButtons();
-    updateObjectButtons();
-    repaint();
-}
-
-void EngineerViewportComponent::showContextMenu(const juce::MouseEvent& event)
-{
-    juce::PopupMenu menu;
-    juce::PopupMenu viewMenu;
-    viewMenu.addItem(101, "Technical Design View", true, viewMode == ViewMode::design);
-    viewMenu.addItem(102, "Assembly Floor View", true, viewMode == ViewMode::assemblyFloor);
-    menu.addSubMenu("View Mode", viewMenu);
-
-    juce::PopupMenu cameraMenu;
-    cameraMenu.addItem(111, "ISO", true, sceneModel.getCameraPreset() == EngineerSceneModel::CameraPreset::iso);
-    cameraMenu.addItem(112, "Top", true, sceneModel.getCameraPreset() == EngineerSceneModel::CameraPreset::top);
-    cameraMenu.addItem(113, "Walk", true, sceneModel.getCameraPreset() == EngineerSceneModel::CameraPreset::walk);
-    cameraMenu.addSeparator();
-    cameraMenu.addItem(114, "Reset Navigation");
-    menu.addSubMenu("Camera", cameraMenu);
-
-    const auto clickedIndex = hitTestObject(event.position);
-    if (clickedIndex >= 0)
-    {
-        menu.addItem(120, "Select " + sceneModel.getObjects()[static_cast<size_t>(clickedIndex)].name);
-
-        juce::PopupMenu objectMenu;
-        objectMenu.addItem(121, "Block", true, sceneModel.getObjects()[static_cast<size_t>(clickedIndex)].primitiveType == "Block");
-        objectMenu.addItem(122, "Cylinder", true, sceneModel.getObjects()[static_cast<size_t>(clickedIndex)].primitiveType == "Cylinder");
-        objectMenu.addItem(123, "Plate", true, sceneModel.getObjects()[static_cast<size_t>(clickedIndex)].primitiveType == "Plate");
-        menu.addSubMenu("Primitive", objectMenu);
-    }
-
-    if (sceneModel.isSelectedObjectDirectGeometry())
-    {
-        juce::PopupMenu geometryMenu;
-        geometryMenu.addItem(131, "Translate", true, sceneModel.getSelectedGeometryTool() == EngineerSceneModel::GeometryTool::translate);
-        geometryMenu.addItem(132, "Scale", true, sceneModel.getSelectedGeometryTool() == EngineerSceneModel::GeometryTool::scale);
-        geometryMenu.addItem(133, "Extrude", true, sceneModel.getSelectedGeometryTool() == EngineerSceneModel::GeometryTool::extrude);
-        geometryMenu.addItem(134, "Bevel", true, sceneModel.getSelectedGeometryTool() == EngineerSceneModel::GeometryTool::bevel);
-        geometryMenu.addSeparator();
-        geometryMenu.addItem(135, sceneModel.isGeometrySnappingEnabled() ? "Disable Snapping" : "Enable Snapping");
-        menu.addSubMenu("Direct Geometry", geometryMenu);
-    }
-
-    juce::Component::SafePointer<EngineerViewportComponent> safeThis(this);
-    menu.showMenuAsync(juce::PopupMenu::Options().withTargetScreenArea({ event.getScreenPosition(), { 1, 1 } }),
-                       [safeThis, clickedIndex](int result)
-                       {
-                           if (safeThis != nullptr)
-                               safeThis->handleContextMenuResult(result, clickedIndex);
-                       });
-}
-
-void EngineerViewportComponent::handleContextMenuResult(int result, int clickedIndex)
-{
-    switch (result)
-    {
-        case 101: viewMode = ViewMode::design; break;
-        case 102: viewMode = ViewMode::assemblyFloor; break;
-        case 111: sceneModel.setCameraPreset(EngineerSceneModel::CameraPreset::iso); break;
-        case 112: sceneModel.setCameraPreset(EngineerSceneModel::CameraPreset::top); break;
-        case 113: sceneModel.setCameraPreset(EngineerSceneModel::CameraPreset::walk); break;
-        case 114:
-            viewPan = {};
-            viewZoom = 1.0f;
-            applyCameraPreset(sceneModel.getCameraPreset());
-            break;
-        case 120:
-            if (clickedIndex >= 0)
-                sceneModel.selectObject(clickedIndex);
-            break;
-        case 121:
-        case 122:
-        case 123:
-            if (clickedIndex >= 0)
-            {
-                sceneModel.selectObject(clickedIndex);
-                sceneModel.setSelectedObjectPrimitiveType(result == 121 ? "Block" : result == 122 ? "Cylinder" : "Plate");
-            }
-            break;
-        case 131: sceneModel.setSelectedGeometryTool(EngineerSceneModel::GeometryTool::translate); break;
-        case 132: sceneModel.setSelectedGeometryTool(EngineerSceneModel::GeometryTool::scale); break;
-        case 133: sceneModel.setSelectedGeometryTool(EngineerSceneModel::GeometryTool::extrude); break;
-        case 134: sceneModel.setSelectedGeometryTool(EngineerSceneModel::GeometryTool::bevel); break;
-        case 135: sceneModel.setGeometrySnappingEnabled(!sceneModel.isGeometrySnappingEnabled()); break;
-        default: break;
-    }
-
-    repaint();
-}
-
-void EngineerViewportComponent::applyCameraPreset(EngineerSceneModel::CameraPreset preset)
-{
-    switch (preset)
-    {
-        case EngineerSceneModel::CameraPreset::iso:
-            viewYaw = 0.40f;
-            viewPitch = 0.30f;
-            break;
-        case EngineerSceneModel::CameraPreset::top:
-            viewYaw = 0.0f;
-            viewPitch = 0.0f;
-            break;
-        case EngineerSceneModel::CameraPreset::walk:
-            viewYaw = 0.75f;
-            viewPitch = 0.18f;
-            break;
-    }
 }
 
 void EngineerViewportComponent::paint(juce::Graphics& g)
 {
-    auto bounds = getLocalBounds().toFloat();
-    g.setColour(panelFill());
-    g.fillRoundedRectangle(bounds, 18.0f);
-    g.setColour(frameColour());
-    g.drawRoundedRectangle(bounds, 18.0f, 1.0f);
-
-    auto toolbar = bounds.removeFromTop(72.0f);
-    auto viewport = getViewportBounds();
-
-    g.setColour(juce::Colour(0xff0c131d));
-    g.fillRoundedRectangle(viewport, 18.0f);
-    g.setColour(frameColour().brighter(0.2f));
-    g.drawRoundedRectangle(viewport, 18.0f, 1.0f);
-
-    drawSceneGrid(g, viewport.reduced(18.0f));
-
-    auto headerArea = viewport.reduced(24.0f);
     g.setColour(juce::Colours::white);
-    g.setFont(juce::Font(22.0f).boldened());
-    g.drawText(viewMode == ViewMode::design ? "Technical Design View" : "Assembly Floor View",
-               headerArea.removeFromTop(28.0f).toNearestInt(),
-               juce::Justification::centredLeft,
-               true);
+    g.setFont(juce::Font(juce::FontOptions(16.0f)).boldened());
+    g.drawText(viewModeLabel(viewMode), 12, 10, 200, 22, juce::Justification::left, true);
 
-    g.setColour(juce::Colour(0xffb9c7d9));
-    g.setFont(juce::Font(14.0f));
-    g.drawText("Left click: select   |   Drag center handle: move part   |   Right-click: viewport menu   |   Middle drag: orbit   |   Shift+middle drag: pan   |   Wheel: zoom",
-               headerArea.removeFromTop(22.0f).toNearestInt(),
-               juce::Justification::centredLeft,
-               true);
+    g.setColour(juce::Colour(0xffc2cfde));
+    g.setFont(juce::Font(juce::FontOptions(13.0f)));
+    g.drawText("Orbit: middle drag   Pan: shift+middle drag   Zoom: wheel   Menu: right-click",
+               12, 34, getWidth() - 24, 18, juce::Justification::left, true);
 
-    const auto& selectedObject = sceneModel.getSelectedObject();
-    g.drawText("Selected object: " + selectedObject.name + "   |   Source: " + selectedObject.primitiveType,
-               headerArea.removeFromTop(22.0f).toNearestInt(),
-               juce::Justification::centredLeft,
-               true);
+    const auto& selected = sceneModel.getSelectedObject();
+    g.drawText("Selected: " + selected.name
+               + "   State: " + EngineerSceneModel::toDisplayString(selected.authoringState)
+               + "   Tool: " + EngineerSceneModel::toDisplayString(sceneModel.getSelectedGeometryTool()),
+               12, 54, getWidth() - 24, 18, juce::Justification::left, true);
+}
 
-    g.drawText("Workflow: " + EngineerSceneModel::toDisplayString(selectedObject.authoringState)
-                + "   |   Camera: " + cameraLabel(sceneModel.getCameraPreset())
-                + "   |   Zoom: " + juce::String(viewZoom, 2),
-               headerArea.removeFromTop(22.0f).toNearestInt(),
-               juce::Justification::centredLeft,
-               true);
-
-    if (selectedObject.authoringState == EngineerSceneModel::AuthoringState::directGeometry)
-    {
-        g.drawText("Direct geometry tool: " + EngineerSceneModel::toDisplayString(sceneModel.getSelectedGeometryTool())
-                    + "   |   Element: " + EngineerSceneModel::toDisplayString(sceneModel.getSelectedGeometryElementKind())
-                    + " " + juce::String(sceneModel.getSelectedGeometryElementIndex() + 1)
-                    + "   |   Depth: " + juce::String(selectedObject.geometryDepth * 100.0f, 1)
-                    + " mm   |   Bevel: " + juce::String(selectedObject.bevelAmount * 100.0f, 1) + " mm",
-                   headerArea.removeFromTop(22.0f).toNearestInt(),
-                   juce::Justification::centredLeft,
-                   true);
-    }
-
-    auto sceneArea = getSceneBounds();
-
-    if (viewMode == ViewMode::design)
-    {
-        const auto selectedIndex = sceneModel.getSelectedObjectIndex();
-        const auto& objects = sceneModel.getObjects();
-        for (size_t i = 0; i < objects.size(); ++i)
-        {
-            const auto& object = objects[i];
-            auto rect = getObjectBounds(object);
-            const bool selected = static_cast<int>(i) == selectedIndex;
-
-            if (object.authoringState == EngineerSceneModel::AuthoringState::directGeometry)
-            {
-                drawDirectGeometryOverlay(g, rect, object.geometryDepth, object.bevelAmount, selected);
-                if (selected)
-                {
-                    drawGeometryElementProxies(g, rect, sceneModel.getSelectedGeometryElementKind(), sceneModel.getSelectedGeometryElementIndex());
-                    drawViewportGizmo(g,
-                                      getSelectedGeometryAnchor(object, rect),
-                                      sceneModel.getSelectedGeometryTool(),
-                                      gizmoDragMode);
-                }
-            }
-            else if (selected)
-            {
-                drawObjectMoveHandle(g, rect, true);
-            }
-
-            g.setColour((selected ? cyanAccent() : juce::Colour(0xff6ca1bf)).withAlpha(selected ? 0.95f : 0.65f));
-            g.drawRoundedRectangle(rect, 10.0f, selected ? 2.5f : 1.4f);
-
-            auto inset = rect.reduced(rect.getWidth() * 0.18f, rect.getHeight() * 0.18f);
-            g.setColour((selected ? accentColour() : juce::Colour(0xff8f7f56)).withAlpha(selected ? 0.85f : 0.60f));
-            g.drawRect(inset, selected ? 2.0f : 1.0f);
-
-            if (object.mirrorXEnabled && object.authoringState != EngineerSceneModel::AuthoringState::directGeometry)
-            {
-                auto mirrored = mirroredRectX(sceneArea, rect);
-                g.setColour(cyanAccent().withAlpha(selected ? 0.38f : 0.24f));
-                g.drawRoundedRectangle(mirrored, 10.0f, 1.2f);
-                g.setColour(accentColour().withAlpha(selected ? 0.28f : 0.18f));
-                g.fillRoundedRectangle(mirrored.reduced(6.0f), 8.0f);
-            }
-        }
-
-        g.setColour(juce::Colour(0xffcfe8ff));
-        g.setFont(juce::Font(13.0f));
-        g.drawText("Dimension-ready design surface with shared object selection and primitive-to-geometry workflow", sceneArea.removeFromBottom(22.0f).toNearestInt(),
-                   juce::Justification::centred, true);
-    }
-    else
-    {
-        juce::Path floorPath;
-        floorPath.startNewSubPath(sceneArea.getX() + 40.0f, sceneArea.getBottom() - 40.0f);
-        floorPath.lineTo(sceneArea.getCentreX(), sceneArea.getY() + 40.0f);
-        floorPath.lineTo(sceneArea.getRight() - 40.0f, sceneArea.getBottom() - 40.0f);
-        floorPath.closeSubPath();
-
-        g.setColour(juce::Colour(0x2840556a));
-        g.fillPath(floorPath);
-        g.setColour(cyanAccent().withAlpha(0.7f));
-        g.strokePath(floorPath, juce::PathStrokeType(2.0f));
-
-        const auto selectedIndex = sceneModel.getSelectedObjectIndex();
-        const auto& objects = sceneModel.getObjects();
-        for (size_t i = 0; i < objects.size(); ++i)
-        {
-            const auto& object = objects[i];
-            auto projected = getObjectBounds(object);
-            const bool selected = static_cast<int>(i) == selectedIndex;
-
-            if (object.authoringState == EngineerSceneModel::AuthoringState::directGeometry)
-            {
-                drawDirectGeometryOverlay(g, projected, object.geometryDepth, object.bevelAmount, selected);
-                if (selected)
-                {
-                    drawGeometryElementProxies(g, projected, sceneModel.getSelectedGeometryElementKind(), sceneModel.getSelectedGeometryElementIndex());
-                    drawViewportGizmo(g,
-                                      getSelectedGeometryAnchor(object, projected),
-                                      sceneModel.getSelectedGeometryTool(),
-                                      gizmoDragMode);
-                }
-            }
-            else if (selected)
-            {
-                drawObjectMoveHandle(g, projected, true);
-            }
-
-            g.setColour((selected ? accentColour() : juce::Colour(0xff8e7958)).withAlpha(selected ? 0.92f : 0.68f));
-            g.fillRoundedRectangle(projected, 10.0f);
-            g.setColour(juce::Colours::white.withAlpha(selected ? 0.58f : 0.30f));
-            g.drawRoundedRectangle(projected, 10.0f, selected ? 1.8f : 1.0f);
-
-            if (object.mirrorXEnabled && object.authoringState != EngineerSceneModel::AuthoringState::directGeometry)
-            {
-                auto mirrored = mirroredRectX(sceneArea, projected);
-                g.setColour(accentColour().withAlpha(selected ? 0.35f : 0.22f));
-                g.fillRoundedRectangle(mirrored, 10.0f);
-                g.setColour(juce::Colours::white.withAlpha(0.20f));
-                g.drawRoundedRectangle(mirrored, 10.0f, 1.0f);
-            }
-        }
-
-        g.setColour(juce::Colour(0xffcfe8ff));
-        g.setFont(juce::Font(13.0f));
-        g.drawText("Rendered assembly-floor inspection using the same scene objects", sceneArea.removeFromBottom(22.0f).toNearestInt(),
-                   juce::Justification::centred, true);
-    }
+void EngineerViewportComponent::resized()
+{
+    updateViewMatrices();
 }
 
 void EngineerViewportComponent::mouseDown(const juce::MouseEvent& event)
@@ -511,173 +374,52 @@ void EngineerViewportComponent::mouseDown(const juce::MouseEvent& event)
     {
         dragAnchor = event.position;
         isNavigatingView = true;
-        isDraggingObject = false;
-        isDraggingGeometryElement = false;
-        gizmoDragMode = GizmoDragMode::none;
         return;
     }
 
-    const auto clickedIndex = hitTestObject(event.position);
-    if (clickedIndex < 0)
-        return;
-
-    sceneModel.selectObject(clickedIndex);
-    repaint();
-
-    const auto& selectedObject = sceneModel.getSelectedObject();
-    const auto objectBounds = getObjectBounds(selectedObject);
-    if (selectedObject.authoringState == EngineerSceneModel::AuthoringState::directGeometry)
+    if (event.mods.isLeftButtonDown())
     {
-        const auto gizmoHit = hitTestGizmo(event.position, selectedObject, objectBounds);
-        if (gizmoHit.valid)
-        {
-            dragAnchor = event.position;
-            gizmoDragMode = gizmoHit.mode;
-            isDraggingGeometryElement = true;
-            isDraggingObject = false;
-            return;
-        }
-
-        const auto geometryHit = hitTestGeometryElement(event.position, selectedObject, objectBounds);
-        if (geometryHit.valid)
-        {
-            sceneModel.setSelectedGeometryElementKind(geometryHit.kind);
-            sceneModel.setSelectedGeometryElementIndex(geometryHit.index);
-            dragAnchor = event.position;
-            isDraggingGeometryElement = true;
-            gizmoDragMode = GizmoDragMode::elementProxy;
-            isDraggingObject = false;
-            return;
-        }
+        const auto clickedIndex = hitTestObject(event.position);
+        if (clickedIndex >= 0)
+            sceneModel.selectObject(clickedIndex);
     }
-
-    if (hitTestObjectMoveHandle(event.position, selectedObject, objectBounds))
-    {
-        dragAnchor = event.position;
-        dragStartPosition = selectedObject.normalizedPosition;
-        isDraggingObject = true;
-        isDraggingGeometryElement = false;
-        return;
-    }
-
-    dragAnchor = event.position;
-    dragStartPosition = selectedObject.normalizedPosition;
-    isDraggingObject = false;
 }
 
 void EngineerViewportComponent::mouseDrag(const juce::MouseEvent& event)
 {
-    if (isNavigatingView)
-    {
-        const auto deltaPixels = event.position - dragAnchor;
-        dragAnchor = event.position;
-
-        if (event.mods.isShiftDown())
-        {
-            viewPan += deltaPixels;
-        }
-        else
-        {
-            viewYaw += deltaPixels.x * 0.01f;
-            viewPitch = juce::jlimit(-0.85f, 0.85f, viewPitch - deltaPixels.y * 0.008f);
-        }
-
-        repaint();
+    if (!isNavigatingView)
         return;
+
+    const auto delta = event.position - dragAnchor;
+    dragAnchor = event.position;
+
+    if (event.mods.isShiftDown())
+    {
+        const auto right = Vec3 { std::cos(yawRadians), 0.0f, -std::sin(yawRadians) };
+        const auto forward = Vec3 { std::sin(yawRadians), 0.0f, std::cos(yawRadians) };
+        orbitTarget.x -= right.x * delta.x * 0.03f;
+        orbitTarget.z -= right.z * delta.x * 0.03f;
+        orbitTarget.x += forward.x * delta.y * 0.03f;
+        orbitTarget.z += forward.z * delta.y * 0.03f;
+    }
+    else
+    {
+        yawRadians += delta.x * 0.010f;
+        pitchRadians = juce::jlimit(-1.42f, -0.08f, pitchRadians - delta.y * 0.008f);
     }
 
-    if (isDraggingGeometryElement)
-    {
-        const auto sceneBounds = getSceneBounds();
-        if (sceneBounds.isEmpty())
-            return;
-
-        auto deltaPixels = event.position - dragAnchor;
-        juce::Point<float> deltaNormalized(deltaPixels.x / sceneBounds.getWidth(),
-                                           deltaPixels.y / sceneBounds.getHeight());
-
-        switch (gizmoDragMode)
-        {
-            case GizmoDragMode::elementProxy:
-                sceneModel.nudgeSelectedGeometryElement(deltaNormalized);
-                dragAnchor = event.position;
-                return;
-            case GizmoDragMode::xAxis:
-                deltaNormalized.y = 0.0f;
-                break;
-            case GizmoDragMode::yAxis:
-                deltaNormalized.x = 0.0f;
-                break;
-            case GizmoDragMode::planar:
-                break;
-            case GizmoDragMode::depthAxis:
-            {
-                sceneModel.extrudeSelectedDirectGeometry((deltaNormalized.x - deltaNormalized.y) * 0.14f);
-                dragAnchor = event.position;
-                return;
-            }
-            case GizmoDragMode::bevelAxis:
-            {
-                sceneModel.bevelSelectedDirectGeometry((deltaNormalized.x - deltaNormalized.y) * 0.07f);
-                dragAnchor = event.position;
-                return;
-            }
-            case GizmoDragMode::none:
-                break;
-        }
-
-        switch (sceneModel.getSelectedGeometryTool())
-        {
-            case EngineerSceneModel::GeometryTool::translate:
-                sceneModel.nudgeSelectedDirectGeometryPosition(deltaNormalized);
-                break;
-            case EngineerSceneModel::GeometryTool::scale:
-                sceneModel.scaleSelectedDirectGeometry({ deltaNormalized.x, -deltaNormalized.y });
-                break;
-            case EngineerSceneModel::GeometryTool::extrude:
-                sceneModel.extrudeSelectedDirectGeometry((deltaNormalized.x - deltaNormalized.y) * 0.12f);
-                break;
-            case EngineerSceneModel::GeometryTool::bevel:
-                sceneModel.bevelSelectedDirectGeometry((deltaNormalized.x - deltaNormalized.y) * 0.06f);
-                break;
-        }
-
-        dragAnchor = event.position;
-        return;
-    }
-
-    if (!isDraggingObject)
-        return;
-
-    const auto sceneBounds = getSceneBounds();
-    if (sceneBounds.isEmpty())
-        return;
-
-    auto deltaPixels = event.position - dragAnchor;
-    juce::Point<float> deltaNormalized(deltaPixels.x / sceneBounds.getWidth(),
-                                       deltaPixels.y / sceneBounds.getHeight());
-    auto next = dragStartPosition + deltaNormalized;
-    next.x = juce::jlimit(0.10f, 0.90f, next.x);
-    next.y = juce::jlimit(0.10f, 0.90f, next.y);
-    sceneModel.setSelectedObjectPosition(next);
+    updateViewMatrices();
 }
 
 void EngineerViewportComponent::mouseUp(const juce::MouseEvent&)
 {
-    isDraggingObject = false;
-    isDraggingGeometryElement = false;
     isNavigatingView = false;
-    gizmoDragMode = GizmoDragMode::none;
 }
 
 void EngineerViewportComponent::mouseWheelMove(const juce::MouseEvent&, const juce::MouseWheelDetails& wheel)
 {
-    viewZoom = juce::jlimit(0.45f, 2.75f, viewZoom + wheel.deltaY * 0.22f);
-    repaint();
-}
-
-void EngineerViewportComponent::resized()
-{
+    orbitDistance = juce::jlimit(4.0f, 70.0f, orbitDistance - wheel.deltaY * 3.5f);
+    updateViewMatrices();
 }
 
 EngineerViewportComponent::ViewMode EngineerViewportComponent::getViewMode() const noexcept
@@ -685,219 +427,403 @@ EngineerViewportComponent::ViewMode EngineerViewportComponent::getViewMode() con
     return viewMode;
 }
 
-juce::Rectangle<float> EngineerViewportComponent::getViewportBounds() const
+void EngineerViewportComponent::engineerSceneModelChanged()
 {
-    auto bounds = getLocalBounds().toFloat();
-    auto viewport = bounds.reduced(14.0f, 0.0f);
-    viewport.removeFromTop(10.0f);
-    viewport.removeFromBottom(12.0f);
-    return viewport;
+    if (!isNavigatingView)
+        applyCameraPreset(sceneModel.getCameraPreset());
+
+    repaint();
 }
 
-juce::Rectangle<float> EngineerViewportComponent::getSceneBounds() const
+void EngineerViewportComponent::newOpenGLContextCreated()
 {
-    auto sceneArea = getViewportBounds().reduced(28.0f);
-    sceneArea.removeFromTop(94.0f);
-    return sceneArea;
+    const char* vertexShader = R"(
+        #version 150 core
+        in vec3 position;
+        in vec3 normal;
+        uniform mat4 uMvp;
+        uniform mat4 uModel;
+        out vec3 vNormal;
+        out vec3 vWorldPosition;
+        void main()
+        {
+            vec4 world = uModel * vec4(position, 1.0);
+            vWorldPosition = world.xyz;
+            vNormal = mat3(uModel) * normal;
+            gl_Position = uMvp * vec4(position, 1.0);
+        }
+    )";
+
+    const char* fragmentShader = R"(
+        #version 150 core
+        uniform vec4 uBaseColour;
+        uniform float uLightingMix;
+        uniform vec3 uLightDirection;
+        in vec3 vNormal;
+        out vec4 fragColour;
+        void main()
+        {
+            vec3 n = normalize(vNormal);
+            float diffuse = max(dot(n, normalize(-uLightDirection)), 0.0);
+            vec3 shaded = uBaseColour.rgb * (0.20 + diffuse * 0.80);
+            vec3 colour = mix(uBaseColour.rgb, shaded, uLightingMix);
+            fragColour = vec4(colour, uBaseColour.a);
+        }
+    )";
+
+    shader.program = std::make_unique<juce::OpenGLShaderProgram>(openGLContext);
+    if (!shader.program->addVertexShader(juce::OpenGLHelpers::translateVertexShaderToV3(vertexShader))
+        || !shader.program->addFragmentShader(juce::OpenGLHelpers::translateFragmentShaderToV3(fragmentShader))
+        || !shader.program->link())
+    {
+        shader.program.reset();
+        return;
+    }
+
+    shader.position = std::make_unique<juce::OpenGLShaderProgram::Attribute>(*shader.program, "position");
+    shader.normal = std::make_unique<juce::OpenGLShaderProgram::Attribute>(*shader.program, "normal");
+    shader.mvp = std::make_unique<juce::OpenGLShaderProgram::Uniform>(*shader.program, "uMvp");
+    shader.model = std::make_unique<juce::OpenGLShaderProgram::Uniform>(*shader.program, "uModel");
+    shader.baseColour = std::make_unique<juce::OpenGLShaderProgram::Uniform>(*shader.program, "uBaseColour");
+    shader.lightingMix = std::make_unique<juce::OpenGLShaderProgram::Uniform>(*shader.program, "uLightingMix");
+    shader.lightDirection = std::make_unique<juce::OpenGLShaderProgram::Uniform>(*shader.program, "uLightDirection");
+
+    initialiseSceneBuffers();
+    updateViewMatrices();
 }
 
-juce::Rectangle<float> EngineerViewportComponent::getObjectBounds(const EngineerSceneModel::SceneObject& object) const
+void EngineerViewportComponent::renderOpenGL()
 {
-    const auto sceneBounds = getSceneBounds();
-    auto bounds = normalizedRectToBounds(sceneBounds, object.normalizedPosition, object.normalizedSize);
-    bounds = transformRect(bounds, sceneBounds);
-    if (viewMode == ViewMode::assemblyFloor)
-        return projectForAssemblyFloor(bounds, transformPoint(normalizedRectToBounds(sceneBounds, object.normalizedPosition, object.normalizedSize).getCentre(), sceneBounds));
+    juce::OpenGLHelpers::clear(juce::Colour(0xff0d131b));
+    glEnable(GL_DEPTH_TEST);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glEnable(GL_CULL_FACE);
 
-    return bounds;
+    const auto scale = static_cast<float>(openGLContext.getRenderingScale());
+    glViewport(0, 0, juce::roundToInt(scale * static_cast<float>(getWidth())),
+               juce::roundToInt(scale * static_cast<float>(getHeight())));
+
+    updateViewMatrices();
+    renderScene();
+}
+
+void EngineerViewportComponent::openGLContextClosing()
+{
+    releaseSceneBuffers();
+    shader = {};
+}
+
+void EngineerViewportComponent::showContextMenu(const juce::MouseEvent& event)
+{
+    juce::PopupMenu menu;
+    juce::PopupMenu viewMenu;
+    viewMenu.addItem(101, "3D Design View", true, viewMode == ViewMode::design3D);
+    viewMenu.addItem(102, "Assembly Floor View", true, viewMode == ViewMode::assemblyFloor);
+    viewMenu.addItem(103, "Planar Layer View", true, viewMode == ViewMode::planarLayer);
+    menu.addSubMenu("View Mode", viewMenu);
+
+    juce::PopupMenu cameraMenu;
+    cameraMenu.addItem(111, "ISO", true, sceneModel.getCameraPreset() == EngineerSceneModel::CameraPreset::iso);
+    cameraMenu.addItem(112, "Top", true, sceneModel.getCameraPreset() == EngineerSceneModel::CameraPreset::top);
+    cameraMenu.addItem(113, "Walk", true, sceneModel.getCameraPreset() == EngineerSceneModel::CameraPreset::walk);
+    menu.addSubMenu("Camera", cameraMenu);
+
+    juce::PopupMenu primitiveMenu;
+    primitiveMenu.addItem(121, "Block");
+    primitiveMenu.addItem(122, "Cylinder");
+    primitiveMenu.addItem(123, "Plate");
+    menu.addSubMenu("Add Primitive", primitiveMenu);
+
+    if (sceneModel.isSelectedObjectDirectGeometry())
+    {
+        juce::PopupMenu geometryMenu;
+        geometryMenu.addItem(131, "Translate", true, sceneModel.getSelectedGeometryTool() == EngineerSceneModel::GeometryTool::translate);
+        geometryMenu.addItem(132, "Scale", true, sceneModel.getSelectedGeometryTool() == EngineerSceneModel::GeometryTool::scale);
+        geometryMenu.addItem(133, "Extrude", true, sceneModel.getSelectedGeometryTool() == EngineerSceneModel::GeometryTool::extrude);
+        geometryMenu.addItem(134, "Bevel", true, sceneModel.getSelectedGeometryTool() == EngineerSceneModel::GeometryTool::bevel);
+        menu.addSubMenu("Direct Geometry", geometryMenu);
+    }
+
+    const auto clickedIndex = hitTestObject(event.position);
+    juce::Component::SafePointer<EngineerViewportComponent> safeThis(this);
+    menu.showMenuAsync(juce::PopupMenu::Options().withTargetScreenArea({ event.getScreenPosition(), { 1, 1 } }),
+                       [safeThis, clickedIndex](int result)
+                       {
+                           if (safeThis != nullptr)
+                               safeThis->handleContextMenuResult(result, clickedIndex);
+                       });
+}
+
+void EngineerViewportComponent::handleContextMenuResult(int result, int clickedIndex)
+{
+    switch (result)
+    {
+        case 101: viewMode = ViewMode::design3D; break;
+        case 102: viewMode = ViewMode::assemblyFloor; break;
+        case 103: viewMode = ViewMode::planarLayer; break;
+        case 111: sceneModel.setCameraPreset(EngineerSceneModel::CameraPreset::iso); break;
+        case 112: sceneModel.setCameraPreset(EngineerSceneModel::CameraPreset::top); break;
+        case 113: sceneModel.setCameraPreset(EngineerSceneModel::CameraPreset::walk); break;
+        case 121: sceneModel.addPrimitiveObject("Block"); break;
+        case 122: sceneModel.addPrimitiveObject("Cylinder"); break;
+        case 123: sceneModel.addPrimitiveObject("Plate"); break;
+        case 131: sceneModel.setSelectedGeometryTool(EngineerSceneModel::GeometryTool::translate); break;
+        case 132: sceneModel.setSelectedGeometryTool(EngineerSceneModel::GeometryTool::scale); break;
+        case 133: sceneModel.setSelectedGeometryTool(EngineerSceneModel::GeometryTool::extrude); break;
+        case 134: sceneModel.setSelectedGeometryTool(EngineerSceneModel::GeometryTool::bevel); break;
+        default: break;
+    }
+
+    if (clickedIndex >= 0)
+        sceneModel.selectObject(clickedIndex);
+
+    applyCameraPreset(sceneModel.getCameraPreset());
+}
+
+void EngineerViewportComponent::applyCameraPreset(EngineerSceneModel::CameraPreset preset)
+{
+    switch (preset)
+    {
+        case EngineerSceneModel::CameraPreset::iso:
+            yawRadians = 0.78f;
+            pitchRadians = -0.55f;
+            orbitDistance = 19.0f;
+            useOrthographicProjection = false;
+            break;
+        case EngineerSceneModel::CameraPreset::top:
+            yawRadians = 0.0f;
+            pitchRadians = -1.40f;
+            orbitDistance = 24.0f;
+            useOrthographicProjection = true;
+            break;
+        case EngineerSceneModel::CameraPreset::walk:
+            yawRadians = 0.58f;
+            pitchRadians = -0.22f;
+            orbitDistance = 11.0f;
+            useOrthographicProjection = false;
+            break;
+    }
+
+    if (viewMode == ViewMode::planarLayer)
+        useOrthographicProjection = true;
+
+    updateViewMatrices();
+}
+
+void EngineerViewportComponent::initialiseSceneBuffers()
+{
+    buildMeshBuffer(boxMesh, makeBoxVertices(), GL_TRIANGLES);
+    buildMeshBuffer(cylinderMesh, makeCylinderVertices(), GL_TRIANGLES);
+    buildMeshBuffer(gridMesh, makeGridVertices(), GL_LINES);
+}
+
+void EngineerViewportComponent::releaseSceneBuffers()
+{
+    auto releaseBuffer = [this](MeshBuffer& mesh)
+    {
+        if (mesh.vbo != 0)
+            glDeleteBuffers(1, &mesh.vbo);
+        if (mesh.vao != 0)
+            openGLContext.extensions.glDeleteVertexArrays(1, &mesh.vao);
+        mesh = {};
+    };
+
+    releaseBuffer(boxMesh);
+    releaseBuffer(cylinderMesh);
+    releaseBuffer(gridMesh);
+}
+
+void EngineerViewportComponent::buildMeshBuffer(MeshBuffer& mesh,
+                                                const std::vector<float>& vertices,
+                                                GLenum primitiveType)
+{
+    mesh.primitiveType = primitiveType;
+    mesh.vertexCount = static_cast<GLsizei>(vertices.size() / 6);
+
+    openGLContext.extensions.glGenVertexArrays(1, &mesh.vao);
+    openGLContext.extensions.glBindVertexArray(mesh.vao);
+    glGenBuffers(1, &mesh.vbo);
+    glBindBuffer(GL_ARRAY_BUFFER, mesh.vbo);
+    glBufferData(GL_ARRAY_BUFFER,
+                 static_cast<GLsizeiptr>(vertices.size() * sizeof(float)),
+                 vertices.data(),
+                 GL_STATIC_DRAW);
+
+    glEnableVertexAttribArray(static_cast<GLuint>(shader.position->attributeID));
+    glVertexAttribPointer(static_cast<GLuint>(shader.position->attributeID), 3, GL_FLOAT, GL_FALSE, sizeof(float) * 6, nullptr);
+    glEnableVertexAttribArray(static_cast<GLuint>(shader.normal->attributeID));
+    glVertexAttribPointer(static_cast<GLuint>(shader.normal->attributeID), 3, GL_FLOAT, GL_FALSE, sizeof(float) * 6, reinterpret_cast<const void*>(sizeof(float) * 3));
+
+    openGLContext.extensions.glBindVertexArray(0);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+}
+
+void EngineerViewportComponent::renderScene()
+{
+    if (shader.program == nullptr)
+        return;
+
+    shader.program->use();
+    shader.lightDirection->set(0.45f, -1.0f, 0.35f);
+
+    renderGrid();
+
+    const auto selectedIndex = sceneModel.getSelectedObjectIndex();
+    const auto& objects = sceneModel.getObjects();
+    for (size_t i = 0; i < objects.size(); ++i)
+    {
+        const auto& object = objects[i];
+        const bool selected = static_cast<int>(i) == selectedIndex;
+        renderObject(object, selected, false);
+        if (object.mirrorXEnabled)
+            renderObject(object, selected, true);
+    }
+
+    openGLContext.extensions.glBindVertexArray(0);
+}
+
+void EngineerViewportComponent::renderGrid() const
+{
+    if (gridMesh.vao == 0)
+        return;
+
+    const auto vp = multiply(projectionMatrix, viewMatrix);
+    shader.mvp->setMatrix4(vp.data(), 1, false);
+    shader.model->setMatrix4(identityMatrix().data(), 1, false);
+    shader.baseColour->set(0.19f, 0.31f, 0.42f, 1.0f);
+    shader.lightingMix->set(0.0f);
+
+    openGLContext.extensions.glBindVertexArray(gridMesh.vao);
+    glDrawArrays(gridMesh.primitiveType, 0, gridMesh.vertexCount);
+}
+
+void EngineerViewportComponent::renderObject(const EngineerSceneModel::SceneObject& object,
+                                             bool selected,
+                                             bool mirrored) const
+{
+    const auto model = objectModelMatrix(object, mirrored);
+    const auto vp = multiply(projectionMatrix, viewMatrix);
+    const auto mvp = multiply(vp, model);
+    const auto colour = objectColour(object, selected, mirrored);
+
+    shader.mvp->setMatrix4(mvp.data(), 1, false);
+    shader.model->setMatrix4(model.data(), 1, false);
+    shader.baseColour->set(colour.getFloatRed(),
+                           colour.getFloatGreen(),
+                           colour.getFloatBlue(),
+                           colour.getFloatAlpha());
+    shader.lightingMix->set(mirrored ? 0.35f : 1.0f);
+
+    const auto& mesh = object.primitiveType.equalsIgnoreCase("Cylinder") ? cylinderMesh : boxMesh;
+    openGLContext.extensions.glBindVertexArray(mesh.vao);
+    glDrawArrays(mesh.primitiveType, 0, mesh.vertexCount);
+
+    if (!mirrored)
+    {
+        glDisable(GL_CULL_FACE);
+        glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+        shader.baseColour->set(selected ? 0.35f : 0.82f,
+                               selected ? 0.82f : 0.63f,
+                               1.0f,
+                               selected ? 1.0f : 0.42f);
+        shader.lightingMix->set(0.0f);
+        glDrawArrays(mesh.primitiveType, 0, mesh.vertexCount);
+        glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+        glEnable(GL_CULL_FACE);
+    }
 }
 
 int EngineerViewportComponent::hitTestObject(juce::Point<float> point) const
 {
-    const auto& objects = sceneModel.getObjects();
-    for (int i = static_cast<int>(objects.size()) - 1; i >= 0; --i)
+    const auto projectedBounds = buildProjectedObjectBounds();
+    for (auto it = projectedBounds.rbegin(); it != projectedBounds.rend(); ++it)
     {
-        if (getObjectBounds(objects[static_cast<size_t>(i)]).contains(point))
-            return i;
+        if (it->screenBounds.contains(point))
+            return it->index;
     }
 
     return -1;
 }
 
-bool EngineerViewportComponent::hitTestObjectMoveHandle(juce::Point<float> point,
-                                                        const EngineerSceneModel::SceneObject& object,
-                                                        juce::Rectangle<float> rect) const
+std::vector<EngineerViewportComponent::ProjectedObjectBounds> EngineerViewportComponent::buildProjectedObjectBounds() const
 {
-    if (object.authoringState == EngineerSceneModel::AuthoringState::directGeometry)
-        return false;
-
-    const auto centre = rect.getCentre();
-    return juce::Rectangle<float>(centre.x - 12.0f, centre.y - 12.0f, 24.0f, 24.0f).contains(point);
-}
-
-juce::Point<float> EngineerViewportComponent::getSelectedGeometryAnchor(const EngineerSceneModel::SceneObject&,
-                                                                        juce::Rectangle<float> rect) const
-{
-    switch (sceneModel.getSelectedGeometryElementKind())
-    {
-        case EngineerSceneModel::GeometryElementKind::vertex:
-            return rectangleVertices(rect)[static_cast<size_t>(juce::jlimit(0, 3, sceneModel.getSelectedGeometryElementIndex()))];
-        case EngineerSceneModel::GeometryElementKind::edge:
-            return rectangleEdgeMidpoints(rect)[static_cast<size_t>(juce::jlimit(0, 3, sceneModel.getSelectedGeometryElementIndex()))];
-        case EngineerSceneModel::GeometryElementKind::face:
-            return rect.getCentre();
-    }
-
-    return rect.getCentre();
-}
-
-EngineerViewportComponent::GeometryHit EngineerViewportComponent::hitTestGeometryElement(juce::Point<float> point,
-                                                                                         const EngineerSceneModel::SceneObject& object,
-                                                                                         juce::Rectangle<float> rect) const
-{
-    GeometryHit hit;
-    if (object.authoringState != EngineerSceneModel::AuthoringState::directGeometry)
-        return hit;
-
-    const auto vertices = rectangleVertices(rect);
-    for (int i = 0; i < 4; ++i)
-    {
-        juce::Rectangle<float> handle(vertices[static_cast<size_t>(i)].x - 8.0f,
-                                      vertices[static_cast<size_t>(i)].y - 8.0f,
-                                      16.0f,
-                                      16.0f);
-        if (handle.contains(point))
-            return { true, EngineerSceneModel::GeometryElementKind::vertex, i };
-    }
-
-    const auto midpoints = rectangleEdgeMidpoints(rect);
-    for (int i = 0; i < 4; ++i)
-    {
-        juce::Rectangle<float> handle(midpoints[static_cast<size_t>(i)].x - 10.0f,
-                                      midpoints[static_cast<size_t>(i)].y - 6.0f,
-                                      20.0f,
-                                      12.0f);
-        if (handle.contains(point))
-            return { true, EngineerSceneModel::GeometryElementKind::edge, i };
-    }
-
-    if (rect.reduced(10.0f).contains(point))
-        return { true, EngineerSceneModel::GeometryElementKind::face, 0 };
-
-    return hit;
-}
-
-EngineerViewportComponent::GizmoHit EngineerViewportComponent::hitTestGizmo(juce::Point<float> point,
-                                                                            const EngineerSceneModel::SceneObject& object,
-                                                                            juce::Rectangle<float> rect) const
-{
-    GizmoHit hit;
-    if (object.authoringState != EngineerSceneModel::AuthoringState::directGeometry)
-        return hit;
-
-    const auto anchor = getSelectedGeometryAnchor(object, rect);
-    const auto tool = sceneModel.getSelectedGeometryTool();
-
-    juce::Rectangle<float> planar(anchor.x - 8.0f, anchor.y - 8.0f, 16.0f, 16.0f);
-    juce::Rectangle<float> xHandle(anchor.x + 24.0f, anchor.y - 8.0f, 16.0f, 16.0f);
-    juce::Rectangle<float> yHandle(anchor.x - 8.0f, anchor.y - 40.0f, 16.0f, 16.0f);
-
-    if (xHandle.contains(point))
-        return { true, GizmoDragMode::xAxis };
-    if (yHandle.contains(point))
-        return { true, GizmoDragMode::yAxis };
-
-    if (tool == EngineerSceneModel::GeometryTool::extrude)
-    {
-        juce::Rectangle<float> depthHandle(anchor.x + 16.0f, anchor.y - 32.0f, 16.0f, 16.0f);
-        if (depthHandle.contains(point))
-            return { true, GizmoDragMode::depthAxis };
-    }
-
-    if (tool == EngineerSceneModel::GeometryTool::bevel)
-    {
-        juce::Rectangle<float> bevelRing(anchor.x - 20.0f, anchor.y - 20.0f, 40.0f, 40.0f);
-        if (bevelRing.contains(point) && !planar.reduced(2.0f).contains(point))
-            return { true, GizmoDragMode::bevelAxis };
-    }
-
-    if (planar.contains(point))
-        return { true, GizmoDragMode::planar };
-
-    return hit;
-}
-
-juce::Point<float> EngineerViewportComponent::transformPoint(juce::Point<float> point, juce::Rectangle<float> sceneBounds) const
-{
-    auto centered = point - sceneBounds.getCentre();
-    const auto cosYaw = std::cos(viewYaw);
-    const auto sinYaw = std::sin(viewYaw);
-    juce::Point<float> rotated(centered.x * cosYaw - centered.y * sinYaw,
-                               centered.x * sinYaw + centered.y * cosYaw);
-    rotated.x *= viewZoom;
-    rotated.y *= viewZoom * (0.88f + 0.12f * std::cos(viewPitch));
-    return sceneBounds.getCentre() + rotated + viewPan;
-}
-
-juce::Rectangle<float> EngineerViewportComponent::transformRect(juce::Rectangle<float> rect, juce::Rectangle<float> sceneBounds) const
-{
-    const auto transformedCentre = transformPoint(rect.getCentre(), sceneBounds);
-    auto width = rect.getWidth() * viewZoom;
-    auto height = rect.getHeight() * viewZoom * (0.88f + 0.12f * std::cos(viewPitch));
-    return { transformedCentre.x - width * 0.5f,
-             transformedCentre.y - height * 0.5f,
-             width,
-             height };
-}
-
-void EngineerViewportComponent::configureButton(juce::TextButton& button)
-{
-    button.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff1a2533));
-    button.setColour(juce::TextButton::buttonOnColourId, juce::Colour(0xff25354a));
-    button.setColour(juce::TextButton::textColourOffId, juce::Colours::white);
-    button.setColour(juce::TextButton::textColourOnId, juce::Colours::white);
-}
-
-void EngineerViewportComponent::updateModeButtons()
-{
-    designViewButton.setToggleState(viewMode == ViewMode::design, juce::dontSendNotification);
-    assemblyFloorButton.setToggleState(viewMode == ViewMode::assemblyFloor, juce::dontSendNotification);
-}
-
-void EngineerViewportComponent::updatePrimitiveButtons()
-{
-    blockButton.setToggleState(selectedPrimitive == "Block", juce::dontSendNotification);
-    cylinderButton.setToggleState(selectedPrimitive == "Cylinder", juce::dontSendNotification);
-    plateButton.setToggleState(selectedPrimitive == "Plate", juce::dontSendNotification);
-}
-
-void EngineerViewportComponent::updateCameraButtons()
-{
-    isoCameraButton.setToggleState(sceneModel.getCameraPreset() == EngineerSceneModel::CameraPreset::iso, juce::dontSendNotification);
-    topCameraButton.setToggleState(sceneModel.getCameraPreset() == EngineerSceneModel::CameraPreset::top, juce::dontSendNotification);
-    walkCameraButton.setToggleState(sceneModel.getCameraPreset() == EngineerSceneModel::CameraPreset::walk, juce::dontSendNotification);
-}
-
-void EngineerViewportComponent::updateObjectButtons()
-{
+    std::vector<ProjectedObjectBounds> bounds;
+    const auto vp = multiply(projectionMatrix, viewMatrix);
+    const auto area = viewportRectFor(*this).reduced(2.0f);
     const auto& objects = sceneModel.getObjects();
-    auto configureObjectButton = [&](juce::TextButton& button, int index)
-    {
-        if (index < static_cast<int>(objects.size()))
-        {
-            button.setButtonText(objects[static_cast<size_t>(index)].name);
-            button.setEnabled(true);
-            button.setToggleState(sceneModel.getSelectedObjectIndex() == index, juce::dontSendNotification);
-        }
-        else
-        {
-            button.setButtonText("Unused");
-            button.setEnabled(false);
-            button.setToggleState(false, juce::dontSendNotification);
-        }
-    };
 
-    configureObjectButton(objectOneButton, 0);
-    configureObjectButton(objectTwoButton, 1);
-    configureObjectButton(objectThreeButton, 2);
+    for (size_t i = 0; i < objects.size(); ++i)
+    {
+        const auto& object = objects[i];
+        const auto scale = objectScaleFor(object);
+        const std::array<Vec3, 8> corners {
+            Vec3 { -scale.x, -scale.y, -scale.z },
+            Vec3 {  scale.x, -scale.y, -scale.z },
+            Vec3 { -scale.x,  scale.y, -scale.z },
+            Vec3 {  scale.x,  scale.y, -scale.z },
+            Vec3 { -scale.x, -scale.y,  scale.z },
+            Vec3 {  scale.x, -scale.y,  scale.z },
+            Vec3 { -scale.x,  scale.y,  scale.z },
+            Vec3 {  scale.x,  scale.y,  scale.z }
+        };
+
+        const auto model = objectModelMatrix(object, false);
+        juce::Rectangle<float> rect;
+        bool started = false;
+        for (const auto& corner : corners)
+        {
+            const auto worldCorner = multiply(model, Vec4 { corner.x, corner.y, corner.z, 1.0f });
+            const auto clip = multiply(vp, worldCorner);
+            if (std::abs(clip.w) < 0.0001f)
+                continue;
+
+            const auto point2d = toScreenPoint(clip, area);
+            if (!started)
+            {
+                rect = { point2d.x, point2d.y, 1.0f, 1.0f };
+                started = true;
+            }
+            else
+            {
+                rect = rect.getUnion({ point2d.x, point2d.y, 1.0f, 1.0f });
+            }
+        }
+
+        if (started)
+            bounds.push_back({ static_cast<int>(i), rect.expanded(4.0f), rect.getCentre() });
+    }
+
+    return bounds;
+}
+
+void EngineerViewportComponent::updateViewMatrices()
+{
+    const auto area = viewportRectFor(*this);
+    if (area.getWidth() <= 0.0f || area.getHeight() <= 0.0f)
+        return;
+
+    if (viewMode == ViewMode::planarLayer)
+        useOrthographicProjection = true;
+
+    const auto cameraOffset = Vec3 {
+        std::cos(pitchRadians) * std::sin(yawRadians) * orbitDistance,
+        std::sin(-pitchRadians) * orbitDistance,
+        std::cos(pitchRadians) * std::cos(yawRadians) * orbitDistance
+    };
+    const auto eye = Vec3 { orbitTarget.x + cameraOffset.x, orbitTarget.y + cameraOffset.y, orbitTarget.z + cameraOffset.z };
+    viewMatrix = lookAtMatrix(eye, { orbitTarget.x, orbitTarget.y, orbitTarget.z }, { 0.0f, 1.0f, 0.0f });
+
+    const auto aspect = area.getWidth() / area.getHeight();
+    if (useOrthographicProjection)
+    {
+        const auto halfHeight = orbitDistance * 0.45f;
+        const auto halfWidth = halfHeight * aspect;
+        projectionMatrix = orthographicMatrix(-halfWidth, halfWidth, -halfHeight, halfHeight, 0.1f, 200.0f);
+    }
+    else
+    {
+        const auto fov = viewMode == ViewMode::assemblyFloor ? 58.0f : 42.0f;
+        projectionMatrix = perspectiveMatrix(juce::degreesToRadians(fov), aspect, 0.1f, 250.0f);
+    }
 }

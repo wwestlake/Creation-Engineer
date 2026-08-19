@@ -1,27 +1,22 @@
 #pragma once
 
 #include <JuceHeader.h>
+#include <array>
+#include <memory>
+#include <vector>
+
 #include "EngineerSceneModel.h"
 
-class EngineerViewportComponent final : public juce::Component
-                                       , private EngineerSceneModel::Listener
+class EngineerViewportComponent final : public juce::Component,
+                                        private juce::OpenGLRenderer,
+                                        private EngineerSceneModel::Listener
 {
 public:
     enum class ViewMode
     {
-        design,
-        assemblyFloor
-    };
-
-    enum class GizmoDragMode
-    {
-        none,
-        elementProxy,
-        planar,
-        xAxis,
-        yAxis,
-        depthAxis,
-        bevelAxis
+        design3D,
+        assemblyFloor,
+        planarLayer
     };
 
     explicit EngineerViewportComponent(EngineerSceneModel& sceneModel);
@@ -37,72 +32,74 @@ public:
     ViewMode getViewMode() const noexcept;
 
 private:
-    struct GeometryHit
+    struct ProjectedObjectBounds
     {
-        bool valid = false;
-        EngineerSceneModel::GeometryElementKind kind = EngineerSceneModel::GeometryElementKind::vertex;
-        int index = 0;
+        int index = -1;
+        juce::Rectangle<float> screenBounds;
+        juce::Point<float> screenCentre;
     };
 
-    struct GizmoHit
+    struct MeshBuffer
     {
-        bool valid = false;
-        GizmoDragMode mode = GizmoDragMode::none;
+        GLuint vao = 0;
+        GLuint vbo = 0;
+        GLsizei vertexCount = 0;
+        unsigned int primitiveType = 0;
+    };
+
+    struct ShaderHandles
+    {
+        std::unique_ptr<juce::OpenGLShaderProgram> program;
+        std::unique_ptr<juce::OpenGLShaderProgram::Attribute> position;
+        std::unique_ptr<juce::OpenGLShaderProgram::Attribute> normal;
+        std::unique_ptr<juce::OpenGLShaderProgram::Uniform> mvp;
+        std::unique_ptr<juce::OpenGLShaderProgram::Uniform> model;
+        std::unique_ptr<juce::OpenGLShaderProgram::Uniform> baseColour;
+        std::unique_ptr<juce::OpenGLShaderProgram::Uniform> lightingMix;
+        std::unique_ptr<juce::OpenGLShaderProgram::Uniform> lightDirection;
     };
 
     void engineerSceneModelChanged() override;
+
+    void newOpenGLContextCreated() override;
+    void renderOpenGL() override;
+    void openGLContextClosing() override;
+
     void showContextMenu(const juce::MouseEvent& event);
     void handleContextMenuResult(int result, int clickedIndex);
     void applyCameraPreset(EngineerSceneModel::CameraPreset preset);
-    juce::Rectangle<float> getViewportBounds() const;
-    juce::Rectangle<float> getSceneBounds() const;
-    juce::Rectangle<float> getObjectBounds(const EngineerSceneModel::SceneObject& object) const;
+    void initialiseSceneBuffers();
+    void releaseSceneBuffers();
+    void buildMeshBuffer(MeshBuffer& mesh,
+                         const std::vector<float>& vertices,
+                         GLenum primitiveType);
+    void renderScene();
+    void renderGrid() const;
+    void renderObject(const EngineerSceneModel::SceneObject& object,
+                      bool selected,
+                      bool mirrored) const;
     int hitTestObject(juce::Point<float> point) const;
-    bool hitTestObjectMoveHandle(juce::Point<float> point,
-                                 const EngineerSceneModel::SceneObject& object,
-                                 juce::Rectangle<float> rect) const;
-    juce::Point<float> getSelectedGeometryAnchor(const EngineerSceneModel::SceneObject& object,
-                                                 juce::Rectangle<float> rect) const;
-    GeometryHit hitTestGeometryElement(juce::Point<float> point,
-                                       const EngineerSceneModel::SceneObject& object,
-                                       juce::Rectangle<float> rect) const;
-    GizmoHit hitTestGizmo(juce::Point<float> point,
-                          const EngineerSceneModel::SceneObject& object,
-                          juce::Rectangle<float> rect) const;
-    juce::Point<float> transformPoint(juce::Point<float> point, juce::Rectangle<float> sceneBounds) const;
-    juce::Rectangle<float> transformRect(juce::Rectangle<float> rect, juce::Rectangle<float> sceneBounds) const;
-    void configureButton(juce::TextButton& button);
-    void updateModeButtons();
-    void updatePrimitiveButtons();
-    void updateCameraButtons();
-    void updateObjectButtons();
+    std::vector<ProjectedObjectBounds> buildProjectedObjectBounds() const;
+    void updateViewMatrices();
 
-    ViewMode viewMode = ViewMode::design;
-    juce::String selectedPrimitive { "Block" };
+    ViewMode viewMode = ViewMode::design3D;
     EngineerSceneModel& sceneModel;
-    bool isDraggingObject = false;
-    bool isDraggingGeometryElement = false;
-    bool isNavigatingView = false;
-    GizmoDragMode gizmoDragMode = GizmoDragMode::none;
-    juce::Point<float> dragAnchor;
-    juce::Point<float> dragStartPosition;
-    juce::Point<float> viewPan;
-    float viewZoom = 1.0f;
-    float viewYaw = 0.0f;
-    float viewPitch = 0.0f;
+    juce::OpenGLContext openGLContext;
+    ShaderHandles shader;
+    MeshBuffer boxMesh;
+    MeshBuffer cylinderMesh;
+    MeshBuffer gridMesh;
 
-    juce::TextButton designViewButton { "Design View" };
-    juce::TextButton assemblyFloorButton { "Assembly Floor" };
-    juce::TextButton isoCameraButton { "ISO" };
-    juce::TextButton topCameraButton { "Top" };
-    juce::TextButton walkCameraButton { "Walk" };
-    juce::TextButton blockButton { "Block" };
-    juce::TextButton cylinderButton { "Cylinder" };
-    juce::TextButton plateButton { "Plate" };
-    juce::TextButton objectOneButton { "Base Frame" };
-    juce::TextButton objectTwoButton { "Drive Housing" };
-    juce::TextButton objectThreeButton { "Top Plate" };
-    juce::TextButton refreshButton { "Rebuild View" };
+    juce::Point<float> dragAnchor;
+    bool isNavigatingView = false;
+    juce::Vector3D<float> orbitTarget { 0.0f, 0.0f, 0.0f };
+    float orbitDistance = 18.0f;
+    float yawRadians = 0.72f;
+    float pitchRadians = -0.48f;
+    bool useOrthographicProjection = false;
+
+    std::array<float, 16> projectionMatrix {};
+    std::array<float, 16> viewMatrix {};
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(EngineerViewportComponent)
 };
