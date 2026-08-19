@@ -100,6 +100,7 @@ private:
     GizmoDragMode hitTestGizmo(juce::Point<float> point) const;
     GizmoProjection buildSelectedGizmoProjection() const;
     std::vector<ProjectedObjectBounds> buildProjectedObjectBounds() const;
+    juce::Vector3D<float> getCameraPosition() const noexcept;
     void updateViewMatrices();
 
     ViewMode viewMode = ViewMode::design3D;

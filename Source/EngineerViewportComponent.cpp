@@ -26,6 +26,12 @@ struct Vec4
 
 using Mat4 = std::array<float, 16>;
 
+struct Ray
+{
+    Vec3 origin;
+    Vec3 direction;
+};
+
 Vec3 operator+(Vec3 a, Vec3 b) { return { a.x + b.x, a.y + b.y, a.z + b.z }; }
 Vec3 operator-(Vec3 a, Vec3 b) { return { a.x - b.x, a.y - b.y, a.z - b.z }; }
 Vec3 operator*(Vec3 a, float s) { return { a.x * s, a.y * s, a.z * s }; }
@@ -332,6 +338,78 @@ juce::Point<float> normalised2(juce::Point<float> v)
         return {};
 
     return { v.x / length, v.y / length };
+}
+
+Ray rayFromScreenPoint(juce::Point<float> point,
+                       juce::Rectangle<float> area,
+                       float yawRadians,
+                       float pitchRadians,
+                       float orbitDistance,
+                       juce::Vector3D<float> orbitTarget,
+                       bool orthographic)
+{
+    const auto safeWidth = juce::jmax(1.0f, area.getWidth());
+    const auto safeHeight = juce::jmax(1.0f, area.getHeight());
+    const auto ndcX = ((point.x - area.getX()) / safeWidth) * 2.0f - 1.0f;
+    const auto ndcY = 1.0f - ((point.y - area.getY()) / safeHeight) * 2.0f;
+    const auto aspect = safeWidth / safeHeight;
+
+    const Vec3 target { orbitTarget.x, orbitTarget.y, orbitTarget.z };
+    const Vec3 cameraOffset {
+        std::cos(pitchRadians) * std::sin(yawRadians) * orbitDistance,
+        std::sin(-pitchRadians) * orbitDistance,
+        std::cos(pitchRadians) * std::cos(yawRadians) * orbitDistance
+    };
+    const Vec3 eye = target + cameraOffset;
+    const Vec3 forward = normalise(target - eye);
+    const Vec3 right = normalise(cross(forward, { 0.0f, 1.0f, 0.0f }));
+    const Vec3 up = normalise(cross(right, forward));
+
+    if (orthographic)
+    {
+        const auto halfHeight = orbitDistance * 0.45f;
+        const auto halfWidth = halfHeight * aspect;
+        const auto origin = eye + right * (ndcX * halfWidth) + up * (ndcY * halfHeight);
+        return { origin, forward };
+    }
+
+    const auto fovRadians = juce::degreesToRadians(42.0f);
+    const auto tanHalf = std::tan(fovRadians * 0.5f);
+    auto direction = forward
+                   + right * (ndcX * tanHalf * aspect)
+                   + up * (ndcY * tanHalf);
+    return { eye, normalise(direction) };
+}
+
+bool intersectRayWithAabb(Ray ray, Vec3 minimum, Vec3 maximum, float& distanceOut)
+{
+    float tMin = 0.0f;
+    float tMax = 1.0e9f;
+
+    const auto testAxis = [&](float origin, float direction, float minAxis, float maxAxis, float& ioMin, float& ioMax) -> bool
+    {
+        if (std::abs(direction) < 0.0001f)
+            return origin >= minAxis && origin <= maxAxis;
+
+        auto t0 = (minAxis - origin) / direction;
+        auto t1 = (maxAxis - origin) / direction;
+        if (t0 > t1)
+            std::swap(t0, t1);
+
+        ioMin = juce::jmax(ioMin, t0);
+        ioMax = juce::jmin(ioMax, t1);
+        return ioMax >= ioMin;
+    };
+
+    if (!testAxis(ray.origin.x, ray.direction.x, minimum.x, maximum.x, tMin, tMax))
+        return false;
+    if (!testAxis(ray.origin.y, ray.direction.y, minimum.y, maximum.y, tMin, tMax))
+        return false;
+    if (!testAxis(ray.origin.z, ray.direction.z, minimum.z, maximum.z, tMin, tMax))
+        return false;
+
+    distanceOut = tMin >= 0.0f ? tMin : tMax;
+    return distanceOut >= 0.0f;
 }
 }
 
@@ -836,14 +914,43 @@ void EngineerViewportComponent::drawOverlayGizmo(juce::Graphics& g) const
 
 int EngineerViewportComponent::hitTestObject(juce::Point<float> point) const
 {
-    const auto projectedBounds = buildProjectedObjectBounds();
-    for (auto it = projectedBounds.rbegin(); it != projectedBounds.rend(); ++it)
+    const auto area = viewportRectFor(*this).reduced(2.0f);
+    const auto orthographic = useOrthographicProjection || viewMode == ViewMode::planarLayer;
+    const auto ray = rayFromScreenPoint(point, area, yawRadians, pitchRadians, orbitDistance, orbitTarget, orthographic);
+    const auto& objects = sceneModel.getObjects();
+
+    int bestIndex = -1;
+    float bestDistance = std::numeric_limits<float>::max();
+
+    for (size_t i = 0; i < objects.size(); ++i)
     {
-        if (it->screenBounds.contains(point))
-            return it->index;
+        const auto& object = objects[i];
+        const auto centre = objectCentreFor(object, false);
+        const auto scale = objectScaleFor(object);
+        const Vec3 minimum { centre.x - scale.x, centre.y - scale.y, centre.z - scale.z };
+        const Vec3 maximum { centre.x + scale.x, centre.y + scale.y, centre.z + scale.z };
+
+        float hitDistance = 0.0f;
+        if (intersectRayWithAabb(ray, minimum, maximum, hitDistance) && hitDistance < bestDistance)
+        {
+            bestDistance = hitDistance;
+            bestIndex = static_cast<int>(i);
+        }
+
+        if (object.mirrorXEnabled)
+        {
+            const auto mirroredCentre = objectCentreFor(object, true);
+            const Vec3 mirrorMin { mirroredCentre.x - scale.x, mirroredCentre.y - scale.y, mirroredCentre.z - scale.z };
+            const Vec3 mirrorMax { mirroredCentre.x + scale.x, mirroredCentre.y + scale.y, mirroredCentre.z + scale.z };
+            if (intersectRayWithAabb(ray, mirrorMin, mirrorMax, hitDistance) && hitDistance < bestDistance)
+            {
+                bestDistance = hitDistance;
+                bestIndex = static_cast<int>(i);
+            }
+        }
     }
 
-    return -1;
+    return bestIndex;
 }
 
 EngineerViewportComponent::GizmoDragMode EngineerViewportComponent::hitTestGizmo(juce::Point<float> point) const
@@ -978,4 +1085,13 @@ void EngineerViewportComponent::updateViewMatrices()
         const auto fov = viewMode == ViewMode::assemblyFloor ? 58.0f : 42.0f;
         projectionMatrix = perspectiveMatrix(juce::degreesToRadians(fov), aspect, 0.1f, 250.0f);
     }
+}
+
+juce::Vector3D<float> EngineerViewportComponent::getCameraPosition() const noexcept
+{
+    return {
+        orbitTarget.x + std::cos(pitchRadians) * std::sin(yawRadians) * orbitDistance,
+        orbitTarget.y + std::sin(-pitchRadians) * orbitDistance,
+        orbitTarget.z + std::cos(pitchRadians) * std::cos(yawRadians) * orbitDistance
+    };
 }

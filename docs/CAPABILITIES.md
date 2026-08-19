@@ -462,6 +462,7 @@ Required direction:
 - a real scene-based viewport rather than a painted 2D proxy
 - selectable model components and technical overlays
 - visible 3D gizmos for explicit axis-based interaction
+- depth-aware picking so overlapping solids select by spatial hit order
 - technical display modes rather than purely artistic shading
 - immediate visual response to parameter or solver changes
 - result overlays such as annotations, guides, vectors, states, or field views
