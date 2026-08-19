@@ -25,11 +25,21 @@ public:
     ViewMode getViewMode() const noexcept;
 
 private:
+    struct GeometryHit
+    {
+        bool valid = false;
+        EngineerSceneModel::GeometryElementKind kind = EngineerSceneModel::GeometryElementKind::vertex;
+        int index = 0;
+    };
+
     void engineerSceneModelChanged() override;
     juce::Rectangle<float> getViewportBounds() const;
     juce::Rectangle<float> getSceneBounds() const;
     juce::Rectangle<float> getObjectBounds(const EngineerSceneModel::SceneObject& object) const;
     int hitTestObject(juce::Point<float> point) const;
+    GeometryHit hitTestGeometryElement(juce::Point<float> point,
+                                       const EngineerSceneModel::SceneObject& object,
+                                       juce::Rectangle<float> rect) const;
     void configureButton(juce::TextButton& button);
     void updateModeButtons();
     void updatePrimitiveButtons();
@@ -40,6 +50,7 @@ private:
     juce::String selectedPrimitive { "Block" };
     EngineerSceneModel& sceneModel;
     bool isDraggingObject = false;
+    bool isDraggingGeometryElement = false;
     juce::Point<float> dragAnchor;
     juce::Point<float> dragStartPosition;
 

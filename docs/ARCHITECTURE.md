@@ -252,6 +252,10 @@ The next direct-geometry layer should expose selectable engineering proxies for:
 - edges
 - faces
 
+That layer should not be dock-panel-only. The viewport itself should allow the
+user to pick the active proxy directly and drag it as part of the direct
+geometry workflow.
+
 That lets the workstation begin element-level editing before a fuller mesh or
 solid-editing system arrives.
 

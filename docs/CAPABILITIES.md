@@ -166,6 +166,8 @@ The first live pass should support:
 - face proxy selection
 - stepping between available elements
 - nudging the selected element directly from a docked control surface
+- selecting the active element directly in the viewport
+- dragging the selected viewport proxy to manipulate the committed shape
 
 These proxies give Engineer an engineering-friendly bridge toward fuller
 vertex/edge/face editing without pretending the full mesh editor is already
