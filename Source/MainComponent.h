@@ -1,6 +1,13 @@
-﻿#pragma once
+#pragma once
 
 #include <JuceHeader.h>
+#include "EngineerGeometryElementsComponent.h"
+#include "EngineerGeometryToolsComponent.h"
+#include "EngineerModifiersComponent.h"
+#include "EngineerNavigatorComponent.h"
+#include "EngineerPropertiesComponent.h"
+#include "EngineerSceneModel.h"
+#include "EngineerViewportComponent.h"
 #include <creation/assets/ProjectManifest.h>
 #include <creation/interop/ProjectRegistry.h>
 #include <creation/services/SuiteAiSettings.h>
@@ -8,6 +15,7 @@
 #include <creation/suite/SuiteStoragePaths.h>
 #include <creation/ui/CreationSuiteHeaderBar.h>
 #include <creation/ui/SuiteShellController.h>
+#include <juce_docking/DockManager.h>
 
 class MainComponent final : public juce::Component
 {
@@ -20,31 +28,30 @@ public:
 
 private:
     void configureHeader();
-    void configurePanels();
+    void configureWorkbench();
     void loadSuiteState();
     void refreshShellSummary();
     creation::assets::SuiteAppDomain currentDomain() const noexcept;
     juce::String domainDisplayName() const;
-    juce::String registrySummaryText() const;
-    juce::String aiSummaryText() const;
-    juce::String configSummaryText() const;
-    juce::String workbenchSummaryText() const;
+    juce::String resultsSummaryText() const;
+    juce::String platformSummaryText() const;
 
     CreationSuiteHeaderBar headerBar;
     creation::ui::SuiteShellController suiteShellController;
+    EngineerSceneModel sceneModel;
     juce::Label titleLabel;
     juce::Label subtitleLabel;
     juce::Label runtimeLabel;
+    std::unique_ptr<juce_docking::DockManager> dockManager;
 
-    juce::GroupComponent workbenchGroup;
-    juce::GroupComponent resourcesGroup;
-    juce::GroupComponent aiGroup;
-    juce::GroupComponent configGroup;
-
-    juce::TextEditor workbenchSummary;
-    juce::TextEditor resourcesSummary;
-    juce::TextEditor aiSummary;
-    juce::TextEditor configSummary;
+    EngineerViewportComponent* viewportComponent = nullptr;
+    EngineerNavigatorComponent* navigatorComponent = nullptr;
+    EngineerModifiersComponent* modifiersComponent = nullptr;
+    EngineerGeometryElementsComponent* geometryElementsComponent = nullptr;
+    EngineerGeometryToolsComponent* geometryToolsComponent = nullptr;
+    EngineerPropertiesComponent* propertiesComponent = nullptr;
+    juce::TextEditor* resultsSummary = nullptr;
+    juce::TextEditor* platformSummary = nullptr;
 
     creation::suite::SuiteSettingsStore suiteSettingsStore;
     creation::services::SuiteAiSettingsStore suiteAiSettingsStore;
@@ -57,4 +64,3 @@ private:
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MainComponent)
 };
-

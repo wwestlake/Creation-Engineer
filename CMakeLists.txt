@@ -25,6 +25,13 @@ configure_creation_shared_llvm(CREATION_ENGINEER "Creation Engineer")
 add_subdirectory("${JUCE_DIR}" juce)
 add_subdirectory(Language)
 
+set(CREATION_ENGINEER_VFS_TARGET "")
+if(EXISTS "${CREATION_SUITE_SHARED_DIR}/VFS/CMakeLists.txt")
+    add_subdirectory("${CREATION_SUITE_SHARED_DIR}/VFS"
+                     "${CMAKE_CURRENT_BINARY_DIR}/CreationSuiteSharedVFS")
+    set(CREATION_ENGINEER_VFS_TARGET creation_suite_vfs)
+endif()
+
 set(CREATION_ENGINEER_ASSET_SYSTEM_TARGET "")
 if(EXISTS "${CREATION_SUITE_SHARED_DIR}/AssetSystem/CMakeLists.txt")
     add_subdirectory("${CREATION_SUITE_SHARED_DIR}/AssetSystem"
@@ -46,6 +53,13 @@ if(EXISTS "${CREATION_SUITE_SHARED_DIR}/UI/CMakeLists.txt")
     set(CREATION_ENGINEER_UI_TARGET creation_suite_ui)
 endif()
 
+set(CREATION_ENGINEER_DOCKING_TARGET "")
+if(EXISTS "${CREATION_SUITE_SHARED_DIR}/JuceDocking/CMakeLists.txt")
+    add_subdirectory("${CREATION_SUITE_SHARED_DIR}/JuceDocking"
+                     "${CMAKE_CURRENT_BINARY_DIR}/CreationSuiteSharedDocking")
+    set(CREATION_ENGINEER_DOCKING_TARGET juce_docking)
+endif()
+
 set(CREATION_ENGINEER_INTEROP_TARGET "")
 if(EXISTS "${CREATION_SUITE_SHARED_DIR}/Interop/CMakeLists.txt")
     add_subdirectory("${CREATION_SUITE_SHARED_DIR}/Interop"
@@ -64,7 +78,21 @@ creation_suite_add_shared_bin_copy(CreationEngineerApp)
 juce_generate_juce_header(CreationEngineerApp)
 
 target_sources(CreationEngineerApp PRIVATE
+    Source/EngineerGeometryElementsComponent.cpp
+    Source/EngineerGeometryElementsComponent.h
+    Source/EngineerGeometryToolsComponent.cpp
+    Source/EngineerGeometryToolsComponent.h
+    Source/EngineerModifiersComponent.cpp
+    Source/EngineerModifiersComponent.h
+    Source/EngineerNavigatorComponent.cpp
+    Source/EngineerNavigatorComponent.h
+    Source/EngineerPropertiesComponent.cpp
+    Source/EngineerPropertiesComponent.h
+    Source/EngineerSceneModel.cpp
+    Source/EngineerSceneModel.h
     Source/Main.cpp
+    Source/EngineerViewportComponent.cpp
+    Source/EngineerViewportComponent.h
     Source/MainComponent.cpp
     Source/MainComponent.h
     Source/Branding.cpp
@@ -83,6 +111,7 @@ target_link_libraries(CreationEngineerApp PRIVATE
     ${CREATION_ENGINEER_ASSET_SYSTEM_TARGET}
     ${CREATION_ENGINEER_SERVICES_TARGET}
     ${CREATION_ENGINEER_UI_TARGET}
+    ${CREATION_ENGINEER_DOCKING_TARGET}
     ${CREATION_ENGINEER_INTEROP_TARGET}
     creation_engineer_language_host
     juce::juce_gui_extra

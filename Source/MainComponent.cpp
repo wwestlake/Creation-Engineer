@@ -16,26 +16,39 @@ void configureSummaryBox(juce::TextEditor& editor)
     editor.setColour(juce::TextEditor::outlineColourId, juce::Colour(0xff314155));
     editor.setColour(juce::TextEditor::textColourId, juce::Colours::white);
 }
+
+juce::File getLayoutFile()
+{
+    return juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory)
+        .getChildFile("LagDaemon")
+        .getChildFile("CreationEngineer")
+        .getChildFile("layout.json");
+}
 }
 
 MainComponent::MainComponent()
 {
     configureHeader();
-    configurePanels();
+    configureWorkbench();
     loadSuiteState();
-    setSize(1380, 860);
+    setSize(1500, 920);
 }
-MainComponent::~MainComponent() = default;
+
+MainComponent::~MainComponent()
+{
+    if (dockManager)
+        dockManager->saveLayoutToFile(getLayoutFile());
+}
 
 void MainComponent::configureHeader()
 {
     headerBar.setAppTitle("Creation Engineer");
     headerBar.setLogoImage(creation::ui::getSuiteLogoImage(creation::ui::SuiteLogoId::engineer));
-    headerBar.setProjectLabel("Shell: Ready for domain implementation");
+    headerBar.setProjectLabel("Suite dock workbench");
     headerBar.setTransportControlsVisible(false);
     headerBar.audioButton.setButtonText("Refresh");
     headerBar.tourButton.setButtonText("EULA");
-    headerBar.setStatusText("Loading shared suite state...");
+    headerBar.setStatusText("Loading Engineer workspace...");
     headerBar.onAudioRequested = [this]
     {
         loadSuiteState();
@@ -60,14 +73,14 @@ void MainComponent::configureHeader()
     addAndMakeVisible(headerBar);
 }
 
-void MainComponent::configurePanels()
+void MainComponent::configureWorkbench()
 {
     titleLabel.setText("Creation Engineer", juce::dontSendNotification);
     titleLabel.setFont(juce::Font(31.0f, juce::Font::bold));
     titleLabel.setColour(juce::Label::textColourId, juce::Colours::white);
     addAndMakeVisible(titleLabel);
 
-    subtitleLabel.setText("Shared suite shell with AI, configuration, registry, and domain-entry wiring already in place.",
+    subtitleLabel.setText("Engineer is now using the suite docking-workbench standard: docked viewport, navigator, modifiers, geometry elements, geometry tools, parameters, results, and platform panels.",
                           juce::dontSendNotification);
     subtitleLabel.setColour(juce::Label::textColourId, juce::Colour(0xffc9d3e3));
     addAndMakeVisible(subtitleLabel);
@@ -76,25 +89,69 @@ void MainComponent::configurePanels()
     runtimeLabel.setColour(juce::Label::textColourId, creation_engineer::branding::accentColour());
     addAndMakeVisible(runtimeLabel);
 
-    workbenchGroup.setText("Domain Workbench");
-    resourcesGroup.setText("Resources And Registry");
-    aiGroup.setText("AI Agent Shell");
-    configGroup.setText("Suite Configuration");
+    dockManager = std::make_unique<juce_docking::DockManager>(*this);
+    addAndMakeVisible(*dockManager);
 
-    addAndMakeVisible(workbenchGroup);
-    addAndMakeVisible(resourcesGroup);
-    addAndMakeVisible(aiGroup);
-    addAndMakeVisible(configGroup);
+    auto viewport = std::make_unique<EngineerViewportComponent>(sceneModel);
+    viewportComponent = viewport.get();
 
-    configureSummaryBox(workbenchSummary);
-    configureSummaryBox(resourcesSummary);
-    configureSummaryBox(aiSummary);
-    configureSummaryBox(configSummary);
+    auto navigator = std::make_unique<EngineerNavigatorComponent>(sceneModel);
+    navigatorComponent = navigator.get();
 
-    addAndMakeVisible(workbenchSummary);
-    addAndMakeVisible(resourcesSummary);
-    addAndMakeVisible(aiSummary);
-    addAndMakeVisible(configSummary);
+    auto modifiers = std::make_unique<EngineerModifiersComponent>(sceneModel);
+    modifiersComponent = modifiers.get();
+
+    auto geometryElements = std::make_unique<EngineerGeometryElementsComponent>(sceneModel);
+    geometryElementsComponent = geometryElements.get();
+
+    auto geometryTools = std::make_unique<EngineerGeometryToolsComponent>(sceneModel);
+    geometryToolsComponent = geometryTools.get();
+
+    auto parameters = std::make_unique<EngineerPropertiesComponent>(sceneModel);
+    propertiesComponent = parameters.get();
+
+    auto results = std::make_unique<juce::TextEditor>();
+    configureSummaryBox(*results);
+    resultsSummary = results.get();
+
+    auto platform = std::make_unique<juce::TextEditor>();
+    configureSummaryBox(*platform);
+    platformSummary = platform.get();
+
+    dockManager->registerPanel("viewport",
+                               "Engineering Viewport",
+                               std::move(viewport),
+                               juce_docking::DockTargetZone::CenterTab);
+    dockManager->registerPanel("navigator",
+                               "Engineering Navigator",
+                               std::move(navigator),
+                               juce_docking::DockTargetZone::Left);
+    dockManager->registerPanel("parameters",
+                               "Parameters & Properties",
+                               std::move(parameters),
+                               juce_docking::DockTargetZone::Right);
+    dockManager->registerPanel("modifiers",
+                               "Modifier Stack",
+                               std::move(modifiers),
+                               juce_docking::DockTargetZone::Right);
+    dockManager->registerPanel("geometry-elements",
+                               "Geometry Elements",
+                               std::move(geometryElements),
+                               juce_docking::DockTargetZone::Right);
+    dockManager->registerPanel("geometry-tools",
+                               "Direct Geometry Tools",
+                               std::move(geometryTools),
+                               juce_docking::DockTargetZone::Right);
+    dockManager->registerPanel("platform",
+                               "Suite Platform Context",
+                               std::move(platform),
+                               juce_docking::DockTargetZone::Right);
+    dockManager->registerPanel("results",
+                               "Results & Study Status",
+                               std::move(results),
+                               juce_docking::DockTargetZone::Bottom);
+
+    dockManager->loadLayoutFromFile(getLayoutFile());
 }
 
 void MainComponent::loadSuiteState()
@@ -122,17 +179,18 @@ void MainComponent::loadSuiteState()
     else if (registryError.isNotEmpty())
         headerBar.setStatusText("Project registry: " + registryError);
     else
-        headerBar.setStatusText("Shared suite shell ready.");
+        headerBar.setStatusText("Engineer dock workbench ready.");
 
     refreshShellSummary();
 }
 
 void MainComponent::refreshShellSummary()
 {
-    workbenchSummary.setText(workbenchSummaryText(), juce::dontSendNotification);
-    resourcesSummary.setText(registrySummaryText(), juce::dontSendNotification);
-    aiSummary.setText(aiSummaryText(), juce::dontSendNotification);
-    configSummary.setText(configSummaryText(), juce::dontSendNotification);
+    if (resultsSummary != nullptr)
+        resultsSummary->setText(resultsSummaryText(), juce::dontSendNotification);
+
+    if (platformSummary != nullptr)
+        platformSummary->setText(platformSummaryText(), juce::dontSendNotification);
 }
 
 creation::assets::SuiteAppDomain MainComponent::currentDomain() const noexcept
@@ -145,38 +203,36 @@ juce::String MainComponent::domainDisplayName() const
     return creation::assets::toDisplayName(currentDomain());
 }
 
-juce::String MainComponent::registrySummaryText() const
+juce::String MainComponent::resultsSummaryText() const
 {
     juce::String text;
     text << "App domain: " << domainDisplayName() << "\n";
     text << "Projects in this domain: " << domainProjectCount << "\n";
     text << "Projects across all known suite domains: " << totalProjectCount << "\n\n";
-    text << "This scaffold is already connected to the shared project registry layer.\n";
-    text << "Use this panel to confirm the app is seeing the same suite storage model as every other project.\n";
+    text << "Reserved results surface:\n";
+    text << "- study readiness and validation state\n";
+    text << "- quick metrics and warnings\n";
+    text << "- future plots, tables, and result summaries\n";
+    text << "- comparison snapshots for parameter sweeps\n";
+    text << "- dockable output tabs as analysis grows\n\n";
+    text << "Current live authoring slice:\n";
+    text << "- scene object creation, duplication, and deletion\n";
+    text << "- dedicated modifier stack panel with mirror and shell entries\n";
+    text << "- geometry-element panel for vertex, edge, and face proxy selection\n";
+    text << "- direct geometry tool panel for translate, scale, extrude, and bevel\n";
+    text << "- primitive, modifier-stack, and direct-geometry workflow states\n\n";
+    text << "Analysis stays close to authoring so the workstation feels like engineering, not disconnected utilities.";
 
     if (lastRegistryError.isNotEmpty())
-        text << "\nRegistry message: " << lastRegistryError;
+        text << "\n\nRegistry message: " << lastRegistryError;
 
     return text;
 }
 
-juce::String MainComponent::aiSummaryText() const
+juce::String MainComponent::platformSummaryText() const
 {
     const auto runtime = creation::services::SuiteAiSettingsResolver::resolveRuntimeSettingsForApp(suiteAiSettings,
                                                                                                     currentDomain());
-
-    juce::String text;
-    text << "Shared AI account entries: " << suiteAiSettings.accounts.size() << "\n";
-    text << "Selected app domain token: " << juce::String(creation_engineer::language::getAppDomainName()) << "\n";
-    text << "Resolved provider: " << runtime.providerDisplayName << "\n";
-    text << "Resolved model: " << runtime.modelName << "\n";
-    text << "Resolved base URL: " << runtime.baseUrl << "\n\n";
-    text << "This shell is where app-specific agents, prompts, and task orchestration should sit on top of suite-wide provider selection.";
-    return text;
-}
-
-juce::String MainComponent::configSummaryText() const
-{
     const auto configDirectory = suiteSettingsStore.getSuiteConfigDirectory().getFullPathName();
     const auto containersDirectory = creation::suite::getProjectContainerDirectory(suiteSettings).getFullPathName();
 
@@ -184,24 +240,14 @@ juce::String MainComponent::configSummaryText() const
     text << "Suite config directory: " << configDirectory << "\n";
     text << "Project container root: " << containersDirectory << "\n";
     text << "Suite VFS root: " << suiteSettings.suiteVfsRoot << "\n";
-    text << "Shared resources root: " << suiteSettings.sharedResourcesRoot << "\n";
-    text << "Exports root: " << suiteSettings.exportsRoot << "\n\n";
-    text << "Use the suite gear button to manage shared settings without rebuilding this app-specific shell.";
+    text << "Resolved AI provider: " << runtime.providerDisplayName << "\n";
+    text << "Resolved AI model: " << runtime.modelName << "\n";
+    text << "Language domain token: " << juce::String(creation_engineer::language::getAppDomainName()) << "\n";
+    text << "Layout file: " << getLayoutFile().getFullPathName() << "\n\n";
+    text << "Engineer now uses the suite docking-workbench pattern, which later apps can adopt while Tracker retains special status.";
     return text;
 }
 
-juce::String MainComponent::workbenchSummaryText() const
-{
-    juce::String text;
-    text << "Project shell target: Creation Engineer\n";
-    text << "Domain token: " << juce::String(creation_engineer::language::getAppDomainName()) << "\n\n";
-    text << "Recommended next moves:\n";
-    text << "- define the app's core workflows in docs/CAPABILITIES.md\n";
-    text << "- replace this panel with the first real domain surface\n";
-    text << "- keep app-specific logic in Source/ and Language/\n";
-    text << "- consume shared suite libraries instead of copying infrastructure\n";
-    return text;
-}
 void MainComponent::paint(juce::Graphics& g)
 {
     g.fillAll(creation_engineer::branding::backgroundColour());
@@ -218,33 +264,14 @@ void MainComponent::resized()
 {
     headerBar.setBounds(getLocalBounds().removeFromTop(96));
 
-    auto area = getLocalBounds().reduced(34, 28);
-    area.removeFromTop(88);
+    auto area = getLocalBounds().reduced(32, 26);
+    area.removeFromTop(86);
 
     titleLabel.setBounds(area.removeFromTop(38));
-    subtitleLabel.setBounds(area.removeFromTop(26));
+    subtitleLabel.setBounds(area.removeFromTop(28));
     runtimeLabel.setBounds(area.removeFromTop(24));
     area.removeFromTop(16);
 
-    auto topRow = area.removeFromTop(area.getHeight() / 2);
-    auto leftTop = topRow.removeFromLeft(topRow.getWidth() / 2);
-    leftTop.removeFromRight(8);
-    topRow.removeFromLeft(8);
-
-    workbenchGroup.setBounds(leftTop);
-    resourcesGroup.setBounds(topRow);
-
-    auto bottomRow = area;
-    auto leftBottom = bottomRow.removeFromLeft(bottomRow.getWidth() / 2);
-    leftBottom.removeFromRight(8);
-    bottomRow.removeFromLeft(8);
-
-    aiGroup.setBounds(leftBottom);
-    configGroup.setBounds(bottomRow);
-
-    workbenchSummary.setBounds(workbenchGroup.getBounds().reduced(14, 26));
-    resourcesSummary.setBounds(resourcesGroup.getBounds().reduced(14, 26));
-    aiSummary.setBounds(aiGroup.getBounds().reduced(14, 26));
-    configSummary.setBounds(configGroup.getBounds().reduced(14, 26));
+    if (dockManager)
+        dockManager->setBounds(area);
 }
-
