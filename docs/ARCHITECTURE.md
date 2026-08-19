@@ -334,6 +334,10 @@ The first direct 3D manipulation pass should expose a visible spatial gizmo on
 the selected object so the user can grab projected axes instead of relying on
 ambiguous drag-anywhere behavior.
 
+Selection should also respect real scene depth. When solids overlap in screen
+space, picking should resolve against the closest intersected volume rather
+than whichever object owns the largest projected rectangle.
+
 Selection semantics should also be explicit:
 
 - left click selects without immediately moving the part
