@@ -319,6 +319,20 @@ juce::String viewModeLabel(EngineerViewportComponent::ViewMode mode)
 
     return "3D Design";
 }
+
+float dot2(juce::Point<float> a, juce::Point<float> b)
+{
+    return a.x * b.x + a.y * b.y;
+}
+
+juce::Point<float> normalised2(juce::Point<float> v)
+{
+    const auto length = std::sqrt(v.x * v.x + v.y * v.y);
+    if (length <= 0.0001f)
+        return {};
+
+    return { v.x / length, v.y / length };
+}
 }
 
 EngineerViewportComponent::EngineerViewportComponent(EngineerSceneModel& model)
@@ -355,6 +369,8 @@ void EngineerViewportComponent::paint(juce::Graphics& g)
                + "   State: " + EngineerSceneModel::toDisplayString(selected.authoringState)
                + "   Tool: " + EngineerSceneModel::toDisplayString(sceneModel.getSelectedGeometryTool()),
                12, 54, getWidth() - 24, 18, juce::Justification::left, true);
+
+    drawOverlayGizmo(g);
 }
 
 void EngineerViewportComponent::resized()
@@ -379,6 +395,15 @@ void EngineerViewportComponent::mouseDown(const juce::MouseEvent& event)
 
     if (event.mods.isLeftButtonDown())
     {
+        const auto gizmoHit = hitTestGizmo(event.position);
+        if (gizmoHit != GizmoDragMode::none)
+        {
+            dragAnchor = event.position;
+            isDraggingGizmo = true;
+            gizmoDragMode = gizmoHit;
+            return;
+        }
+
         const auto clickedIndex = hitTestObject(event.position);
         if (clickedIndex >= 0)
             sceneModel.selectObject(clickedIndex);
@@ -388,7 +413,60 @@ void EngineerViewportComponent::mouseDown(const juce::MouseEvent& event)
 void EngineerViewportComponent::mouseDrag(const juce::MouseEvent& event)
 {
     if (!isNavigatingView)
-        return;
+    {
+        if (!isDraggingGizmo)
+            return;
+
+        const auto delta = event.position - dragAnchor;
+        dragAnchor = event.position;
+
+        const auto viewportArea = getLocalBounds().toFloat();
+        auto nextPosition = sceneModel.getSelectedObject().normalizedPosition;
+        auto nextSize = sceneModel.getSelectedObject().normalizedSize;
+
+        switch (gizmoDragMode)
+        {
+            case GizmoDragMode::planar:
+                nextPosition.x += delta.x / juce::jmax(1.0f, viewportArea.getWidth()) * 0.8f;
+                nextPosition.y += delta.y / juce::jmax(1.0f, viewportArea.getHeight()) * 0.8f;
+                sceneModel.setSelectedObjectPosition(nextPosition);
+                return;
+            case GizmoDragMode::axisX:
+            {
+                const auto projection = buildSelectedGizmoProjection();
+                const auto axis = normalised2(projection.axisX - projection.centre);
+                const auto motion = dot2(delta, axis) * 0.0025f;
+                nextPosition.x += motion;
+                sceneModel.setSelectedObjectPosition(nextPosition);
+                return;
+            }
+            case GizmoDragMode::axisY:
+            {
+                const auto projection = buildSelectedGizmoProjection();
+                const auto axis = normalised2(projection.axisY - projection.centre);
+                const auto motion = dot2(delta, axis) * 0.0025f;
+                if (sceneModel.isSelectedObjectDirectGeometry())
+                    sceneModel.extrudeSelectedDirectGeometry(-motion * 0.8f);
+                else
+                {
+                    nextSize.y = juce::jlimit(0.04f, 0.8f, nextSize.y - motion);
+                    sceneModel.setSelectedObjectSize(nextSize);
+                }
+                return;
+            }
+            case GizmoDragMode::axisZ:
+            {
+                const auto projection = buildSelectedGizmoProjection();
+                const auto axis = normalised2(projection.axisZ - projection.centre);
+                const auto motion = dot2(delta, axis) * 0.0025f;
+                nextPosition.y -= motion;
+                sceneModel.setSelectedObjectPosition(nextPosition);
+                return;
+            }
+            case GizmoDragMode::none:
+                return;
+        }
+    }
 
     const auto delta = event.position - dragAnchor;
     dragAnchor = event.position;
@@ -414,6 +492,8 @@ void EngineerViewportComponent::mouseDrag(const juce::MouseEvent& event)
 void EngineerViewportComponent::mouseUp(const juce::MouseEvent&)
 {
     isNavigatingView = false;
+    isDraggingGizmo = false;
+    gizmoDragMode = GizmoDragMode::none;
 }
 
 void EngineerViewportComponent::mouseWheelMove(const juce::MouseEvent&, const juce::MouseWheelDetails& wheel)
@@ -734,6 +814,26 @@ void EngineerViewportComponent::renderObject(const EngineerSceneModel::SceneObje
     }
 }
 
+void EngineerViewportComponent::drawOverlayGizmo(juce::Graphics& g) const
+{
+    const auto projection = buildSelectedGizmoProjection();
+    if (!std::isfinite(projection.centre.x) || !std::isfinite(projection.centre.y))
+        return;
+
+    auto drawAxis = [&g](juce::Point<float> from, juce::Point<float> to, juce::Colour colour, bool active)
+    {
+        g.setColour(colour.withAlpha(active ? 1.0f : 0.9f));
+        g.drawArrow(juce::Line<float>(from, to), active ? 3.0f : 2.0f, 10.0f, 7.0f);
+        g.fillEllipse(to.x - 5.5f, to.y - 5.5f, 11.0f, 11.0f);
+    };
+
+    g.setColour(juce::Colour(0xffcfe8ff).withAlpha(gizmoDragMode == GizmoDragMode::planar ? 0.95f : 0.70f));
+    g.fillRoundedRectangle(juce::Rectangle<float>(projection.centre.x - 7.0f, projection.centre.y - 7.0f, 14.0f, 14.0f), 4.0f);
+    drawAxis(projection.centre, projection.axisX, juce::Colour(0xffff6b6b), gizmoDragMode == GizmoDragMode::axisX);
+    drawAxis(projection.centre, projection.axisY, juce::Colour(0xff5ae08a), gizmoDragMode == GizmoDragMode::axisY);
+    drawAxis(projection.centre, projection.axisZ, juce::Colour(0xff59d0ff), gizmoDragMode == GizmoDragMode::axisZ);
+}
+
 int EngineerViewportComponent::hitTestObject(juce::Point<float> point) const
 {
     const auto projectedBounds = buildProjectedObjectBounds();
@@ -744,6 +844,58 @@ int EngineerViewportComponent::hitTestObject(juce::Point<float> point) const
     }
 
     return -1;
+}
+
+EngineerViewportComponent::GizmoDragMode EngineerViewportComponent::hitTestGizmo(juce::Point<float> point) const
+{
+    const auto projection = buildSelectedGizmoProjection();
+    if (!std::isfinite(projection.centre.x) || !std::isfinite(projection.centre.y))
+        return GizmoDragMode::none;
+
+    auto inHandle = [point](juce::Point<float> handle)
+    {
+        return handle.getDistanceFrom(point) <= 11.0f;
+    };
+
+    if (inHandle(projection.axisX))
+        return GizmoDragMode::axisX;
+    if (inHandle(projection.axisY))
+        return GizmoDragMode::axisY;
+    if (inHandle(projection.axisZ))
+        return GizmoDragMode::axisZ;
+    if (projection.centre.getDistanceFrom(point) <= 12.0f)
+        return GizmoDragMode::planar;
+
+    return GizmoDragMode::none;
+}
+
+EngineerViewportComponent::GizmoProjection EngineerViewportComponent::buildSelectedGizmoProjection() const
+{
+    GizmoProjection projection;
+    const auto area = viewportRectFor(*this).reduced(2.0f);
+    if (area.isEmpty() || sceneModel.getObjects().empty())
+        return { { std::numeric_limits<float>::quiet_NaN(), std::numeric_limits<float>::quiet_NaN() }, {}, {}, {} };
+
+    const auto& object = sceneModel.getSelectedObject();
+    const auto centre = objectCentreFor(object, false);
+    const auto scale = objectScaleFor(object);
+    const auto axisLength = juce::jmax(scale.x, juce::jmax(scale.y, scale.z)) + 1.4f;
+    const auto vp = multiply(projectionMatrix, viewMatrix);
+
+    auto project = [&](Vec3 world) -> juce::Point<float>
+    {
+        const auto clip = multiply(vp, Vec4 { world.x, world.y, world.z, 1.0f });
+        if (std::abs(clip.w) < 0.0001f)
+            return { std::numeric_limits<float>::quiet_NaN(), std::numeric_limits<float>::quiet_NaN() };
+
+        return toScreenPoint(clip, area);
+    };
+
+    projection.centre = project(centre);
+    projection.axisX = project({ centre.x + axisLength, centre.y, centre.z });
+    projection.axisY = project({ centre.x, centre.y + axisLength, centre.z });
+    projection.axisZ = project({ centre.x, centre.y, centre.z + axisLength });
+    return projection;
 }
 
 std::vector<EngineerViewportComponent::ProjectedObjectBounds> EngineerViewportComponent::buildProjectedObjectBounds() const
