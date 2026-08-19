@@ -1,6 +1,7 @@
 #include "EngineerSceneModel.h"
 
 #include <algorithm>
+#include <cmath>
 
 namespace
 {
@@ -359,6 +360,28 @@ void EngineerSceneModel::setSelectedGeometryTool(GeometryTool tool) noexcept
     notifyListeners();
 }
 
+bool EngineerSceneModel::isGeometrySnappingEnabled() const noexcept
+{
+    return geometrySnappingEnabled;
+}
+
+void EngineerSceneModel::setGeometrySnappingEnabled(bool enabled) noexcept
+{
+    geometrySnappingEnabled = enabled;
+    notifyListeners();
+}
+
+float EngineerSceneModel::getGeometrySnapStep() const noexcept
+{
+    return geometrySnapStep;
+}
+
+void EngineerSceneModel::setGeometrySnapStep(float step) noexcept
+{
+    geometrySnapStep = juce::jlimit(0.0025f, 0.05f, step);
+    notifyListeners();
+}
+
 EngineerSceneModel::GeometryElementKind EngineerSceneModel::getSelectedGeometryElementKind() const noexcept
 {
     return selectedGeometryElementKind;
@@ -404,6 +427,8 @@ void EngineerSceneModel::nudgeSelectedGeometryElement(juce::Point<float> delta)
     auto& object = getSelectedObjectMutable();
     if (object.authoringState != AuthoringState::directGeometry)
         return;
+
+    delta = snapDelta(delta);
 
     const auto minSize = 0.05f;
 
@@ -476,7 +501,7 @@ void EngineerSceneModel::nudgeSelectedDirectGeometryPosition(juce::Point<float> 
     if (object.authoringState != AuthoringState::directGeometry)
         return;
 
-    object.normalizedPosition += delta;
+    object.normalizedPosition += snapDelta(delta);
     clampDirectGeometryObject(object);
     notifyListeners();
 }
@@ -487,7 +512,7 @@ void EngineerSceneModel::scaleSelectedDirectGeometry(juce::Point<float> delta)
     if (object.authoringState != AuthoringState::directGeometry)
         return;
 
-    object.normalizedSize += delta;
+    object.normalizedSize += snapDelta(delta);
     clampDirectGeometryObject(object);
     notifyListeners();
 }
@@ -498,7 +523,7 @@ void EngineerSceneModel::extrudeSelectedDirectGeometry(float amount)
     if (object.authoringState != AuthoringState::directGeometry)
         return;
 
-    object.geometryDepth = juce::jlimit(0.02f, 0.24f, object.geometryDepth + amount);
+    object.geometryDepth = juce::jlimit(0.02f, 0.24f, object.geometryDepth + snapScalar(amount));
     notifyListeners();
 }
 
@@ -508,7 +533,7 @@ void EngineerSceneModel::bevelSelectedDirectGeometry(float amount)
     if (object.authoringState != AuthoringState::directGeometry)
         return;
 
-    object.bevelAmount = juce::jlimit(0.0f, 0.08f, object.bevelAmount + amount);
+    object.bevelAmount = juce::jlimit(0.0f, 0.08f, object.bevelAmount + snapScalar(amount));
     notifyListeners();
 }
 
@@ -606,6 +631,30 @@ void EngineerSceneModel::clampDirectGeometryObject(SceneObject& object) noexcept
     const auto halfHeight = object.normalizedSize.y * 0.5f;
     object.normalizedPosition.x = juce::jlimit(0.02f + halfWidth, 0.98f - halfWidth, object.normalizedPosition.x);
     object.normalizedPosition.y = juce::jlimit(0.02f + halfHeight, 0.98f - halfHeight, object.normalizedPosition.y);
+}
+
+juce::Point<float> EngineerSceneModel::snapDelta(juce::Point<float> delta) const noexcept
+{
+    if (!geometrySnappingEnabled)
+        return delta;
+
+    return { snapScalar(delta.x), snapScalar(delta.y) };
+}
+
+float EngineerSceneModel::snapScalar(float value) const noexcept
+{
+    if (!geometrySnappingEnabled)
+        return value;
+
+    if (std::abs(value) < 0.0001f)
+        return 0.0f;
+
+    const auto scaled = value / geometrySnapStep;
+    const auto snapped = std::round(scaled) * geometrySnapStep;
+    if (std::abs(snapped) < geometrySnapStep)
+        return value > 0.0f ? geometrySnapStep : -geometrySnapStep;
+
+    return snapped;
 }
 
 void EngineerSceneModel::notifyListeners()

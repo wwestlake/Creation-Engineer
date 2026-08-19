@@ -260,6 +260,10 @@ The next viewport step should expose visible gizmo handles so direct geometry
 operations can be constrained along meaningful axes instead of relying only on
 free dragging.
 
+That gizmo layer should also expose precision controls for snapping and
+step-size selection so direct geometry edits can land on predictable
+engineering increments rather than only continuous mouse motion.
+
 That lets the workstation begin element-level editing before a fuller mesh or
 solid-editing system arrives.
 

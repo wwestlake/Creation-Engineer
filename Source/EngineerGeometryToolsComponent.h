@@ -17,6 +17,8 @@ private:
     void engineerSceneModelChanged() override;
     void refreshFromScene();
     void selectTool(EngineerSceneModel::GeometryTool tool);
+    void toggleSnapping();
+    void setSnapStep();
     void nudgeLeft();
     void nudgeRight();
     void nudgeUp();
@@ -34,10 +36,13 @@ private:
     juce::Label modeLabel;
     juce::Label depthLabel;
     juce::Label bevelLabel;
+    juce::Label snapLabel;
     juce::TextButton translateButton { "Translate" };
     juce::TextButton scaleButton { "Scale" };
     juce::TextButton extrudeButton { "Extrude" };
     juce::TextButton bevelButton { "Bevel" };
+    juce::ToggleButton snapToggle { "Snap Enabled" };
+    juce::ComboBox snapStepBox;
     juce::TextButton leftButton { "Left" };
     juce::TextButton rightButton { "Right" };
     juce::TextButton upButton { "Up" };
