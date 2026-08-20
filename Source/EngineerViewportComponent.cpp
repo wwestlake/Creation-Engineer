@@ -422,15 +422,60 @@ bool intersectRayWithAabb(Ray ray, Vec3 minimum, Vec3 maximum, float& distanceOu
 }
 }
 
+class EngineerViewportComponent::InteractionOverlay final : public juce::Component
+{
+public:
+    explicit InteractionOverlay(EngineerViewportComponent& ownerIn)
+        : owner(ownerIn)
+    {
+        setOpaque(false);
+        setAlwaysOnTop(true);
+        setInterceptsMouseClicks(true, true);
+        setMouseCursor(juce::MouseCursor::CrosshairCursor);
+    }
+
+    void paint(juce::Graphics& g) override
+    {
+        owner.paintOverlay(g);
+    }
+
+    void mouseDown(const juce::MouseEvent& event) override
+    {
+        owner.mouseDown(event.getEventRelativeTo(&owner));
+    }
+
+    void mouseDrag(const juce::MouseEvent& event) override
+    {
+        owner.mouseDrag(event.getEventRelativeTo(&owner));
+    }
+
+    void mouseUp(const juce::MouseEvent& event) override
+    {
+        owner.mouseUp(event.getEventRelativeTo(&owner));
+    }
+
+    void mouseWheelMove(const juce::MouseEvent& event, const juce::MouseWheelDetails& wheel) override
+    {
+        owner.mouseWheelMove(event.getEventRelativeTo(&owner), wheel);
+    }
+
+private:
+    EngineerViewportComponent& owner;
+};
+
 EngineerViewportComponent::EngineerViewportComponent(EngineerSceneModel& model)
     : sceneModel(model)
 {
     sceneModel.addListener(this);
     applyCameraPreset(sceneModel.getCameraPreset());
 
+    interactionOverlay = std::make_unique<InteractionOverlay>(*this);
+    addAndMakeVisible(*interactionOverlay);
+
     openGLContext.setOpenGLVersionRequired(juce::OpenGLContext::openGL4_1);
     openGLContext.setRenderer(this);
     openGLContext.setContinuousRepainting(true);
+    openGLContext.setComponentPaintingEnabled(true);
     openGLContext.attachTo(*this);
 }
 
@@ -441,6 +486,11 @@ EngineerViewportComponent::~EngineerViewportComponent()
 }
 
 void EngineerViewportComponent::paint(juce::Graphics& g)
+{
+    paintOverlay(g);
+}
+
+void EngineerViewportComponent::paintOverlay(juce::Graphics& g) const
 {
     g.setColour(juce::Colours::white);
     g.setFont(juce::Font(juce::FontOptions(16.0f)).boldened());
@@ -463,6 +513,8 @@ void EngineerViewportComponent::paint(juce::Graphics& g)
 void EngineerViewportComponent::resized()
 {
     updateViewMatrices();
+    if (interactionOverlay != nullptr)
+        interactionOverlay->setBounds(getLocalBounds());
 }
 
 void EngineerViewportComponent::mouseDown(const juce::MouseEvent& event)
@@ -737,7 +789,8 @@ void EngineerViewportComponent::showContextMenu(const juce::MouseEvent& event)
 
     const auto clickedIndex = hitTestObject(event.position);
     juce::Component::SafePointer<EngineerViewportComponent> safeThis(this);
-    menu.showMenuAsync(juce::PopupMenu::Options().withTargetScreenArea({ event.getScreenPosition(), { 1, 1 } }),
+    const auto mouseScreen = juce::Desktop::getMousePosition();
+    menu.showMenuAsync(juce::PopupMenu::Options().withTargetScreenArea({ mouseScreen, { 1, 1 } }),
                        [safeThis, clickedIndex](int result)
                        {
                            if (safeThis != nullptr)
