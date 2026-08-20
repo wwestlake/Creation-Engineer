@@ -110,6 +110,7 @@ private:
     MeshBuffer boxMesh;
     MeshBuffer cylinderMesh;
     MeshBuffer gridMesh;
+    MeshBuffer axisMesh;
 
     juce::Point<float> dragAnchor;
     juce::Point<float> mouseDownPoint;

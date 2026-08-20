@@ -279,6 +279,15 @@ std::vector<float> makeGridVertices()
     return vertices;
 }
 
+std::vector<float> makeAxisVertices()
+{
+    return {
+        0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,   10.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+        0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,    0.0f, 10.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+        0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,    0.0f, 0.0f, 10.0f, 0.0f, 0.0f, 0.0f
+    };
+}
+
 juce::Colour objectColour(const EngineerSceneModel::SceneObject& object, bool selected, bool mirrored)
 {
     auto colour = juce::Colour(0xff7ea0c7);
@@ -613,9 +622,6 @@ EngineerViewportComponent::ViewMode EngineerViewportComponent::getViewMode() con
 
 void EngineerViewportComponent::engineerSceneModelChanged()
 {
-    if (!isNavigatingView)
-        applyCameraPreset(sceneModel.getCameraPreset());
-
     repaint();
 }
 
@@ -800,6 +806,7 @@ void EngineerViewportComponent::initialiseSceneBuffers()
     buildMeshBuffer(boxMesh, makeBoxVertices(), GL_TRIANGLES);
     buildMeshBuffer(cylinderMesh, makeCylinderVertices(), GL_TRIANGLES);
     buildMeshBuffer(gridMesh, makeGridVertices(), GL_LINES);
+    buildMeshBuffer(axisMesh, makeAxisVertices(), GL_LINES);
 }
 
 void EngineerViewportComponent::releaseSceneBuffers()
@@ -816,6 +823,7 @@ void EngineerViewportComponent::releaseSceneBuffers()
     releaseBuffer(boxMesh);
     releaseBuffer(cylinderMesh);
     releaseBuffer(gridMesh);
+    releaseBuffer(axisMesh);
 }
 
 void EngineerViewportComponent::buildMeshBuffer(MeshBuffer& mesh,
@@ -853,6 +861,23 @@ void EngineerViewportComponent::renderScene()
 
     renderGrid();
 
+    if (axisMesh.vao != 0)
+    {
+        const auto vp = multiply(projectionMatrix, viewMatrix);
+        shader.mvp->setMatrix4(vp.data(), 1, false);
+        shader.model->setMatrix4(identityMatrix().data(), 1, false);
+        shader.lightingMix->set(0.0f);
+        openGLContext.extensions.glBindVertexArray(axisMesh.vao);
+        glLineWidth(2.0f);
+        shader.baseColour->set(0.95f, 0.35f, 0.35f, 1.0f);
+        glDrawArrays(axisMesh.primitiveType, 0, 2);
+        shader.baseColour->set(0.35f, 0.95f, 0.45f, 1.0f);
+        glDrawArrays(axisMesh.primitiveType, 2, 2);
+        shader.baseColour->set(0.35f, 0.70f, 0.98f, 1.0f);
+        glDrawArrays(axisMesh.primitiveType, 4, 2);
+        glLineWidth(1.0f);
+    }
+
     const auto selectedIndex = sceneModel.getSelectedObjectIndex();
     const auto& objects = sceneModel.getObjects();
     for (size_t i = 0; i < objects.size(); ++i)
@@ -875,10 +900,11 @@ void EngineerViewportComponent::renderGrid() const
     const auto vp = multiply(projectionMatrix, viewMatrix);
     shader.mvp->setMatrix4(vp.data(), 1, false);
     shader.model->setMatrix4(identityMatrix().data(), 1, false);
-    shader.baseColour->set(0.19f, 0.31f, 0.42f, 1.0f);
+    shader.baseColour->set(0.28f, 0.38f, 0.48f, 1.0f);
     shader.lightingMix->set(0.0f);
 
     openGLContext.extensions.glBindVertexArray(gridMesh.vao);
+    glLineWidth(1.0f);
     glDrawArrays(gridMesh.primitiveType, 0, gridMesh.vertexCount);
 }
 
