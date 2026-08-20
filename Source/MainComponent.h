@@ -1,66 +1,75 @@
 #pragma once
 
 #include <JuceHeader.h>
-#include "EngineerGeometryElementsComponent.h"
-#include "EngineerGeometryToolsComponent.h"
-#include "EngineerModifiersComponent.h"
-#include "EngineerNavigatorComponent.h"
-#include "EngineerPropertiesComponent.h"
-#include "EngineerSceneModel.h"
-#include "EngineerViewportComponent.h"
-#include <creation/assets/ProjectManifest.h>
-#include <creation/interop/ProjectRegistry.h>
-#include <creation/services/SuiteAiSettings.h>
-#include <creation/suite/SuiteSettings.h>
-#include <creation/suite/SuiteStoragePaths.h>
 #include <creation/ui/CreationSuiteHeaderBar.h>
 #include <creation/ui/SuiteShellController.h>
-#include <juce_docking/DockManager.h>
 
-class MainComponent final : public juce::Component
+#include "engine/simulation.h"
+#include "engine/world.h"
+#include "Render/ViewportComponent.h"
+#include "Views/HierarchyPanel.h"
+#include "Views/ImportPanel.h"
+#include "Views/LightPanel.h"
+#include "Views/MaterialsPanel.h"
+#include "Views/NodeEditor/LogicPanel.h"
+#include "Views/PlaceholderPanel.h"
+#include "Views/ScriptPanel.h"
+#include "Views/TransformPanel.h"
+#include "Views/ViewModeBar.h"
+
+#include <creation/assets/ProjectSession.h>
+#include <creation/assets/ProjectWorkspaceService.h>
+#include <creation/suite/SuiteSettings.h>
+
+class MainComponent final : public juce::Component,
+                            private juce::Timer
 {
 public:
     MainComponent();
     ~MainComponent() override;
 
-    void paint(juce::Graphics& g) override;
+    void paint(juce::Graphics&) override;
     void resized() override;
 
 private:
-    void configureHeader();
-    void configureWorkbench();
-    void loadSuiteState();
-    void refreshShellSummary();
-    creation::assets::SuiteAppDomain currentDomain() const noexcept;
-    juce::String domainDisplayName() const;
-    juce::String resultsSummaryText() const;
-    juce::String platformSummaryText() const;
+    void timerCallback() override;
+    void SetActiveMode(ce::WorkspaceMode mode);
+    void SetPlaying(bool playing);
 
-    CreationSuiteHeaderBar headerBar;
-    creation::ui::SuiteShellController suiteShellController;
-    EngineerSceneModel sceneModel;
-    juce::Label titleLabel;
-    juce::Label subtitleLabel;
-    juce::Label runtimeLabel;
-    std::unique_ptr<juce_docking::DockManager> dockManager;
+    void createNewProject();
+    void openProject(const juce::String& projectId);
+    void saveSessionToDisk(bool userInitiated = false);
+    void loadSessionFromDisk();
+    bool ensureProjectSessionActive(juce::String& errorMessage);
+    void saveAppSettings();
+    void loadAppSettings();
 
-    EngineerViewportComponent* viewportComponent = nullptr;
-    EngineerNavigatorComponent* navigatorComponent = nullptr;
-    EngineerModifiersComponent* modifiersComponent = nullptr;
-    EngineerGeometryElementsComponent* geometryElementsComponent = nullptr;
-    EngineerGeometryToolsComponent* geometryToolsComponent = nullptr;
-    EngineerPropertiesComponent* propertiesComponent = nullptr;
-    juce::TextEditor* resultsSummary = nullptr;
-    juce::TextEditor* platformSummary = nullptr;
+    creation::suite::SuiteSettings suiteSettings_;
+    creation::suite::SuiteSettingsStore suiteSettingsStore_;
+    creation::assets::ProjectSession projectSession_;
+    bool projectDirty_ = false;
 
-    creation::suite::SuiteSettingsStore suiteSettingsStore;
-    creation::services::SuiteAiSettingsStore suiteAiSettingsStore;
-    creation::suite::SuiteSettings suiteSettings;
-    creation::services::SuiteAiSettings suiteAiSettings;
+    ce::engine::World world_;
+    bool isPlaying_ = false;
 
-    juce::String lastRegistryError;
-    int domainProjectCount = 0;
-    int totalProjectCount = 0;
+    CreationSuiteHeaderBar headerBar_;
+    creation::ui::SuiteShellController suiteShellController_;
+    ce::ViewModeBar viewModeBar_;
+    ce::WorkspaceMode activeMode_ = ce::WorkspaceMode::Scene;
+
+    ce::ViewportComponent viewport_;
+    ce::HierarchyPanel hierarchyPanel_;
+    juce::Label inspectorTitle_ { {}, "Inspector" };
+    juce::Label tickLabel_;
+    ce::TransformPanel transformPanel_;
+    ce::ScriptPanel scriptPanel_;
+    ce::MaterialsPanel pbrMaterialPanel_;
+    ce::LightPanel lightPanel_;
+    ce::ImportPanel importPanel_;
+    ce::LogicPanel logicPanel_;
+    ce::PlaceholderPanel materialsPanel_ { "Materials", "Node-based material editor - coming soon" };
+    ce::PlaceholderPanel serverPanel_ { "Server", "Dedicated server operational view - coming soon" };
+    ce::PlaceholderPanel settingsPanel_ { "Settings", "Application settings - coming soon" };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MainComponent)
 };

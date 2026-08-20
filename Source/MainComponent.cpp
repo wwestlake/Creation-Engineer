@@ -1,277 +1,335 @@
 #include "MainComponent.h"
 
-#include "Branding.h"
-#include "../Language/AppLanguagePolicy.h"
+#include <creation/services/SuiteVfsJsonStore.h>
 #include <creation/ui/CreationSuiteLogos.h>
 
-namespace
-{
-void configureSummaryBox(juce::TextEditor& editor)
-{
-    editor.setMultiLine(true);
-    editor.setReadOnly(true);
-    editor.setScrollbarsShown(true);
-    editor.setCaretVisible(false);
-    editor.setColour(juce::TextEditor::backgroundColourId, juce::Colour(0xff121a24));
-    editor.setColour(juce::TextEditor::outlineColourId, juce::Colour(0xff314155));
-    editor.setColour(juce::TextEditor::textColourId, juce::Colours::white);
-}
-
-juce::File getLayoutFile()
-{
-    return juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory)
-        .getChildFile("LagDaemon")
-        .getChildFile("CreationEngineer")
-        .getChildFile("layout.json");
-}
-}
+#include "Scene/EngineSceneSerializer.h"
 
 MainComponent::MainComponent()
-{
-    configureHeader();
-    configureWorkbench();
-    loadSuiteState();
-    setSize(1500, 920);
-}
+    : viewport_(world_),
+      hierarchyPanel_(world_, viewport_),
+      transformPanel_(world_),
+      scriptPanel_(world_, viewport_),
+      pbrMaterialPanel_(world_),
+      importPanel_(world_, viewport_),
+      lightPanel_(viewport_),
+      logicPanel_(world_) {
+    juce::String suiteErr;
+    suiteSettings_ = suiteSettingsStore_.load(suiteErr);
 
-MainComponent::~MainComponent()
-{
-    if (dockManager)
-        dockManager->saveLayoutToFile(getLayoutFile());
-}
-
-void MainComponent::configureHeader()
-{
-    headerBar.setAppTitle("Creation Engineer");
-    headerBar.setLogoImage(creation::ui::getSuiteLogoImage(creation::ui::SuiteLogoId::engineer));
-    headerBar.setProjectLabel("Suite dock workbench");
-    headerBar.setTransportControlsVisible(false);
-    headerBar.audioButton.setButtonText("Refresh");
-    headerBar.tourButton.setButtonText("EULA");
-    headerBar.setStatusText("Loading Engineer workspace...");
-    headerBar.onAudioRequested = [this]
+    headerBar_.setAppTitle("Creation Engineer");
+    headerBar_.setLogoImage(creation::ui::getSuiteLogoImage(creation::ui::SuiteLogoId::engineer));
+    headerBar_.setProjectLabel("Project: Untitled Engineer");
+    headerBar_.audioButton.setButtonText("Engineer");
+    headerBar_.tourButton.setButtonText("Tools");
+    headerBar_.setTransportButtonVisible(CreationSuiteHeaderBar::TransportButtonSlot::rewind, false);
+    headerBar_.setTransportButtonVisible(CreationSuiteHeaderBar::TransportButtonSlot::fastForward, false);
+    headerBar_.setTransportButtonVisible(CreationSuiteHeaderBar::TransportButtonSlot::record, false);
+    headerBar_.setTransportButtonVisible(CreationSuiteHeaderBar::TransportButtonSlot::loop, false);
+    headerBar_.setTransportButtonVisible(CreationSuiteHeaderBar::TransportButtonSlot::click, false);
+    suiteShellController_.attach(headerBar_,
+                                 {
+                                     "Creation Engineer",
+                                     creation::assets::SuiteAppDomain::engineer,
+                                     juce::Colour(0xff15181d),
+                                     creation::ui::SuiteAssetManagerCapability{ "Creation Engineer",
+                                                                                creation::assets::SuiteAppDomain::engineer,
+                                                                                { ".cel" },
+                                                                                { ".cel" } }
+                                 },
+                                 [this](const juce::String& status)
+                                 {
+                                     headerBar_.setStatusText(status);
+                                 });
+    suiteShellController_.onProjectOpenRequested = [this](const juce::String& projectId)
     {
-        loadSuiteState();
+        openProject(projectId);
     };
-    headerBar.onTourRequested = [this]
+    headerBar_.onProjectMenuRequested = [this]
     {
-        suiteShellController.showSuiteEula();
+        suiteShellController_.showProjectBrowser();
     };
-    suiteShellController.attach(headerBar,
-                                {
-                                    "Creation Engineer",
-                                    creation::assets::SuiteAppDomain::engineer,
-                                    creation_engineer::branding::backgroundColour()
-                                },
-                                [this](const juce::String& status)
-                                {
-                                    headerBar.setStatusText(status);
-                                    if (status.containsIgnoreCase("saved suite-wide"))
-                                        loadSuiteState();
-                                });
+    addAndMakeVisible(headerBar_);
+    headerBar_.onPlay = [this] { SetPlaying(true); };
+    headerBar_.onPause = [this] { SetPlaying(false); };
+    headerBar_.onStop = [this] {
+        SetPlaying(false);
+        world_.ResetTick();
+        viewport_.ResetDemoEntityTransform();
+        headerBar_.setStatusText("Stopped");
+    };
+    headerBar_.setStatusText("Editing");
 
-    addAndMakeVisible(headerBar);
+    addAndMakeVisible(viewModeBar_);
+    viewModeBar_.onModeSelected = [this](ce::WorkspaceMode mode) { SetActiveMode(mode); };
+
+    addAndMakeVisible(hierarchyPanel_);
+    hierarchyPanel_.onSelectionChanged = [this](entt::entity entity) {
+        transformPanel_.SetSelectedEntity(entity);
+        scriptPanel_.SetSelectedEntity(entity);
+        pbrMaterialPanel_.SetSelectedEntity(entity);
+        logicPanel_.SetSelectedEntity(entity);
+    };
+    addAndMakeVisible(viewport_);
+
+    inspectorTitle_.setFont(juce::Font(juce::FontOptions(18.0f)).boldened());
+    inspectorTitle_.setColour(juce::Label::textColourId, juce::Colours::white);
+    addAndMakeVisible(inspectorTitle_);
+
+    tickLabel_.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
+    addAndMakeVisible(tickLabel_);
+
+    addAndMakeVisible(transformPanel_);
+    addAndMakeVisible(scriptPanel_);
+    addAndMakeVisible(pbrMaterialPanel_);
+    addAndMakeVisible(lightPanel_);
+
+    addAndMakeVisible(materialsPanel_);
+    addAndMakeVisible(importPanel_);
+    addAndMakeVisible(logicPanel_);
+    addAndMakeVisible(serverPanel_);
+    addAndMakeVisible(settingsPanel_);
+
+    SetActiveMode(ce::WorkspaceMode::Scene);
+    SetPlaying(false);
+
+    setSize(1400, 900);
+    startTimerHz(30);
 }
 
-void MainComponent::configureWorkbench()
-{
-    titleLabel.setText("Creation Engineer", juce::dontSendNotification);
-    titleLabel.setFont(juce::Font(31.0f, juce::Font::bold));
-    titleLabel.setColour(juce::Label::textColourId, juce::Colours::white);
-    addAndMakeVisible(titleLabel);
-
-    subtitleLabel.setText("Engineer is now using the suite docking-workbench standard: docked viewport, navigator, modifiers, geometry elements, geometry tools, parameters, results, and platform panels.",
-                          juce::dontSendNotification);
-    subtitleLabel.setColour(juce::Label::textColourId, juce::Colour(0xffc9d3e3));
-    addAndMakeVisible(subtitleLabel);
-
-    runtimeLabel.setText(juce::String(creation_engineer::language::getLanguageRuntimeSummary()), juce::dontSendNotification);
-    runtimeLabel.setColour(juce::Label::textColourId, creation_engineer::branding::accentColour());
-    addAndMakeVisible(runtimeLabel);
-
-    dockManager = std::make_unique<juce_docking::DockManager>(*this);
-    addAndMakeVisible(*dockManager);
-
-    auto viewport = std::make_unique<EngineerViewportComponent>(sceneModel);
-    viewportComponent = viewport.get();
-
-    auto navigator = std::make_unique<EngineerNavigatorComponent>(sceneModel);
-    navigatorComponent = navigator.get();
-
-    auto modifiers = std::make_unique<EngineerModifiersComponent>(sceneModel);
-    modifiersComponent = modifiers.get();
-
-    auto geometryElements = std::make_unique<EngineerGeometryElementsComponent>(sceneModel);
-    geometryElementsComponent = geometryElements.get();
-
-    auto geometryTools = std::make_unique<EngineerGeometryToolsComponent>(sceneModel);
-    geometryToolsComponent = geometryTools.get();
-
-    auto parameters = std::make_unique<EngineerPropertiesComponent>(sceneModel);
-    propertiesComponent = parameters.get();
-
-    auto results = std::make_unique<juce::TextEditor>();
-    configureSummaryBox(*results);
-    resultsSummary = results.get();
-
-    auto platform = std::make_unique<juce::TextEditor>();
-    configureSummaryBox(*platform);
-    platformSummary = platform.get();
-
-    dockManager->registerPanel("viewport",
-                               "Engineering Viewport",
-                               std::move(viewport),
-                               juce_docking::DockTargetZone::CenterTab);
-    dockManager->registerPanel("navigator",
-                               "Engineering Navigator",
-                               std::move(navigator),
-                               juce_docking::DockTargetZone::Left);
-    dockManager->registerPanel("parameters",
-                               "Parameters & Properties",
-                               std::move(parameters),
-                               juce_docking::DockTargetZone::Right);
-    dockManager->registerPanel("modifiers",
-                               "Modifier Stack",
-                               std::move(modifiers),
-                               juce_docking::DockTargetZone::Right);
-    dockManager->registerPanel("geometry-elements",
-                               "Geometry Elements",
-                               std::move(geometryElements),
-                               juce_docking::DockTargetZone::Right);
-    dockManager->registerPanel("geometry-tools",
-                               "Direct Geometry Tools",
-                               std::move(geometryTools),
-                               juce_docking::DockTargetZone::Right);
-    dockManager->registerPanel("platform",
-                               "Suite Platform Context",
-                               std::move(platform),
-                               juce_docking::DockTargetZone::Right);
-    dockManager->registerPanel("results",
-                               "Results & Study Status",
-                               std::move(results),
-                               juce_docking::DockTargetZone::Bottom);
-
-    dockManager->loadLayoutFromFile(getLayoutFile());
+MainComponent::~MainComponent() {
+    stopTimer();
 }
 
-void MainComponent::loadSuiteState()
-{
-    juce::String suiteError;
-    suiteSettings = suiteSettingsStore.load(suiteError);
-
-    juce::String aiError;
-    suiteAiSettings = suiteAiSettingsStore.load(aiError);
-
-    juce::String registryError;
-    const auto allProjects = creation::interop::ProjectRegistry::discoverProjects(suiteSettings, registryError);
-    totalProjectCount = allProjects.size();
-
-    creation::interop::ProjectQuery domainQuery;
-    domainQuery.appDomain = currentDomain();
-    const auto domainProjects = creation::interop::ProjectRegistry::queryProjects(suiteSettings, domainQuery, registryError);
-    domainProjectCount = domainProjects.size();
-    lastRegistryError = registryError;
-
-    if (suiteError.isNotEmpty())
-        headerBar.setStatusText("Suite settings: " + suiteError);
-    else if (aiError.isNotEmpty())
-        headerBar.setStatusText("AI settings: " + aiError);
-    else if (registryError.isNotEmpty())
-        headerBar.setStatusText("Project registry: " + registryError);
-    else
-        headerBar.setStatusText("Engineer dock workbench ready.");
-
-    refreshShellSummary();
+void MainComponent::paint(juce::Graphics& g) {
+    g.fillAll(juce::Colour(0xff15181d));
 }
 
-void MainComponent::refreshShellSummary()
-{
-    if (resultsSummary != nullptr)
-        resultsSummary->setText(resultsSummaryText(), juce::dontSendNotification);
+void MainComponent::resized() {
+    auto bounds = getLocalBounds();
 
-    if (platformSummary != nullptr)
-        platformSummary->setText(platformSummaryText(), juce::dontSendNotification);
+    headerBar_.setBounds(bounds.removeFromTop(96));
+    viewModeBar_.setBounds(bounds.removeFromTop(56));
+
+    const auto contentArea = bounds;
+
+    auto sceneArea = contentArea;
+    hierarchyPanel_.setBounds(sceneArea.removeFromLeft(220).reduced(4));
+    auto inspectorBounds = sceneArea.removeFromRight(300).reduced(12);
+    inspectorTitle_.setBounds(inspectorBounds.removeFromTop(28));
+    tickLabel_.setBounds(inspectorBounds.removeFromTop(24));
+
+    inspectorBounds.removeFromTop(12);
+    transformPanel_.setBounds(inspectorBounds.removeFromTop(ce::TransformPanel::kPreferredHeight));
+
+    inspectorBounds.removeFromTop(12);
+    scriptPanel_.setBounds(inspectorBounds.removeFromTop(ce::ScriptPanel::kPreferredHeight));
+
+    inspectorBounds.removeFromTop(12);
+    pbrMaterialPanel_.setBounds(inspectorBounds.removeFromTop(ce::MaterialsPanel::kPreferredHeight));
+
+    inspectorBounds.removeFromTop(16);
+    lightPanel_.setBounds(inspectorBounds.removeFromTop(lightPanel_.PreferredHeight()));
+
+    viewport_.setBounds(sceneArea);
+
+    materialsPanel_.setBounds(contentArea);
+    importPanel_.setBounds(contentArea);
+    logicPanel_.setBounds(contentArea);
+    serverPanel_.setBounds(contentArea);
+    settingsPanel_.setBounds(contentArea);
 }
 
-creation::assets::SuiteAppDomain MainComponent::currentDomain() const noexcept
-{
-    return creation::assets::SuiteAppDomain::engineer;
+void MainComponent::SetActiveMode(ce::WorkspaceMode mode) {
+    activeMode_ = mode;
+
+    const bool showScene = mode == ce::WorkspaceMode::Scene;
+    hierarchyPanel_.setVisible(showScene);
+    viewport_.setVisible(showScene);
+    inspectorTitle_.setVisible(showScene);
+    tickLabel_.setVisible(showScene);
+    transformPanel_.setVisible(showScene);
+    scriptPanel_.setVisible(showScene);
+    pbrMaterialPanel_.setVisible(showScene);
+    lightPanel_.setVisible(showScene);
+
+    materialsPanel_.setVisible(mode == ce::WorkspaceMode::Materials);
+    importPanel_.setVisible(mode == ce::WorkspaceMode::Assets);
+    logicPanel_.setVisible(mode == ce::WorkspaceMode::Logic);
+    serverPanel_.setVisible(mode == ce::WorkspaceMode::Server);
+    settingsPanel_.setVisible(mode == ce::WorkspaceMode::Settings);
 }
 
-juce::String MainComponent::domainDisplayName() const
-{
-    return creation::assets::toDisplayName(currentDomain());
+void MainComponent::SetPlaying(bool playing) {
+    isPlaying_ = playing;
+    headerBar_.setPlaybackVisualState(isPlaying_, false);
+    headerBar_.setStatusText(isPlaying_ ? "Playing" : "Editing");
 }
 
-juce::String MainComponent::resultsSummaryText() const
-{
-    juce::String text;
-    text << "App domain: " << domainDisplayName() << "\n";
-    text << "Projects in this domain: " << domainProjectCount << "\n";
-    text << "Projects across all known suite domains: " << totalProjectCount << "\n\n";
-    text << "Reserved results surface:\n";
-    text << "- study readiness and validation state\n";
-    text << "- quick metrics and warnings\n";
-    text << "- future plots, tables, and result summaries\n";
-    text << "- comparison snapshots for parameter sweeps\n";
-    text << "- dockable output tabs as analysis grows\n\n";
-    text << "Current live authoring slice:\n";
-    text << "- scene object creation, duplication, and deletion\n";
-    text << "- dedicated modifier stack panel with mirror and shell entries\n";
-    text << "- geometry-element panel for vertex, edge, and face proxy selection\n";
-    text << "- direct geometry tool panel for translate, scale, extrude, and bevel\n";
-    text << "- primitive, modifier-stack, and direct-geometry workflow states\n\n";
-    text << "Analysis stays close to authoring so the workstation feels like engineering, not disconnected utilities.";
-
-    if (lastRegistryError.isNotEmpty())
-        text << "\n\nRegistry message: " << lastRegistryError;
-
-    return text;
+void MainComponent::timerCallback() {
+    if (isPlaying_) {
+        ce::engine::Simulation::Step(world_, 1.0f / 30.0f);
+    }
+    tickLabel_.setText("tick " + juce::String(world_.CurrentTick()), juce::dontSendNotification);
+    hierarchyPanel_.Refresh();
+    transformPanel_.Refresh();
+    scriptPanel_.Refresh();
+    pbrMaterialPanel_.Refresh();
+    logicPanel_.Refresh();
 }
 
-juce::String MainComponent::platformSummaryText() const
+void MainComponent::createNewProject()
 {
-    const auto runtime = creation::services::SuiteAiSettingsResolver::resolveRuntimeSettingsForApp(suiteAiSettings,
-                                                                                                    currentDomain());
-    const auto configDirectory = suiteSettingsStore.getSuiteConfigDirectory().getFullPathName();
-    const auto containersDirectory = creation::suite::getProjectContainerDirectory(suiteSettings).getFullPathName();
+    auto* prompt = new juce::AlertWindow("Create New Engineer Project",
+                                         "Enter a name for your new Creation Engineer project container:",
+                                         juce::MessageBoxIconType::QuestionIcon);
+    prompt->addTextEditor("projectName", "");
+    prompt->addButton("Create Project", 1);
+    prompt->addButton("Cancel", 0);
 
-    juce::String text;
-    text << "Suite config directory: " << configDirectory << "\n";
-    text << "Project container root: " << containersDirectory << "\n";
-    text << "Suite VFS root: " << suiteSettings.suiteVfsRoot << "\n";
-    text << "Resolved AI provider: " << runtime.providerDisplayName << "\n";
-    text << "Resolved AI model: " << runtime.modelName << "\n";
-    text << "Language domain token: " << juce::String(creation_engineer::language::getAppDomainName()) << "\n";
-    text << "Layout file: " << getLayoutFile().getFullPathName() << "\n\n";
-    text << "Engineer now uses the suite docking-workbench pattern, which later apps can adopt while Tracker retains special status.";
-    return text;
+    auto options = juce::Component::SafePointer<MainComponent>(this);
+    prompt->enterModalState(true, juce::ModalCallbackFunction::create([options, prompt](int result) mutable
+    {
+        std::unique_ptr<juce::AlertWindow> dialog(prompt);
+        if (result != 1 || options == nullptr)
+            return;
+
+        auto name = dialog->getTextEditorContents("projectName").trim();
+        if (name.isEmpty())
+        {
+            juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::WarningIcon, "Project Error", "Project name cannot be empty.");
+            return;
+        }
+
+        juce::String err;
+        if (! creation::assets::ProjectWorkspaceService::createProject(options->suiteSettings_, creation::assets::SuiteAppDomain::engineer, name, "1.0.0", "1.0.0", options->projectSession_, err))
+        {
+            juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::WarningIcon, "Project Error", err);
+            return;
+        }
+
+        options->headerBar_.setProjectLabel("Project: " + options->projectSession_.getManifest().projectName);
+        options->saveSessionToDisk(true);
+        options->saveAppSettings();
+        options->headerBar_.setStatusText("Created project: " + options->projectSession_.getManifest().projectName);
+    }), true);
 }
 
-void MainComponent::paint(juce::Graphics& g)
+void MainComponent::openProject(const juce::String& projectId)
 {
-    g.fillAll(creation_engineer::branding::backgroundColour());
+    juce::String err;
+    if (! creation::assets::ProjectWorkspaceService::openProject(suiteSettings_, projectId, projectSession_, err))
+    {
+        juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::WarningIcon, "Project Error", err);
+        return;
+    }
 
-    auto bounds = getLocalBounds().toFloat().reduced(18.0f);
-    g.setColour(creation_engineer::branding::panelColour());
-    g.fillRoundedRectangle(bounds, 24.0f);
-
-    g.setColour(creation_engineer::branding::accentColour().withAlpha(0.8f));
-    g.drawRoundedRectangle(bounds, 24.0f, 1.4f);
+    headerBar_.setProjectLabel("Project: " + projectSession_.getManifest().projectName);
+    loadSessionFromDisk();
+    saveAppSettings();
 }
 
-void MainComponent::resized()
+void MainComponent::saveSessionToDisk(bool userInitiated)
 {
-    headerBar.setBounds(getLocalBounds().removeFromTop(96));
+    if (! projectSession_.isValid())
+    {
+        if (userInitiated)
+            headerBar_.setStatusText("No active project session to save.");
+        return;
+    }
 
-    auto area = getLocalBounds().reduced(32, 26);
-    area.removeFromTop(86);
+    auto state = ce::scene::EngineSceneSerializer::serializeScene(world_);
 
-    titleLabel.setBounds(area.removeFromTop(38));
-    subtitleLabel.setBounds(area.removeFromTop(28));
-    runtimeLabel.setBounds(area.removeFromTop(24));
-    area.removeFromTop(16);
+    if (auto xml = state.createXml())
+    {
+        auto xmlString = xml->toString();
+        juce::MemoryBlock xmlBlock(xmlString.toRawUTF8(), xmlString.getNumBytesAsUTF8());
+        projectSession_.writeEntry("session.xml", xmlBlock);
+    }
 
-    if (dockManager)
-        dockManager->setBounds(area);
+    juce::String commitError;
+    if (! projectSession_.commit(commitError))
+    {
+        headerBar_.setStatusText("Project save failed: " + commitError);
+        return;
+    }
+
+    if (userInitiated)
+        headerBar_.setStatusText("Project saved: " + projectSession_.getManifest().projectName);
+}
+
+void MainComponent::loadSessionFromDisk()
+{
+    if (! projectSession_.isValid())
+        return;
+
+    juce::MemoryBlock sessionData;
+    if (projectSession_.readEntry("session.xml", sessionData))
+    {
+        auto xmlString = juce::String::createStringFromData(sessionData.getData(), (int) sessionData.getSize());
+        if (auto xml = juce::XmlDocument::parse(xmlString))
+        {
+            auto state = juce::ValueTree::fromXml(*xml);
+            if (ce::scene::EngineSceneSerializer::restoreScene(world_, state))
+            {
+                hierarchyPanel_.Refresh();
+                transformPanel_.Refresh();
+                scriptPanel_.Refresh();
+                logicPanel_.Refresh();
+                pbrMaterialPanel_.Refresh();
+            }
+        }
+    }
+}
+
+bool MainComponent::ensureProjectSessionActive(juce::String& errorMessage)
+{
+    if (projectSession_.isValid())
+        return true;
+
+    juce::String settingsError;
+    auto settings = creation::services::SuiteVfsJsonStore::loadJson("engineer-settings.json", settingsError);
+    if (auto* settingsObject = settings.getDynamicObject())
+    {
+        auto lastProjectId = settingsObject->getProperty("lastOpenedProjectId").toString();
+        if (lastProjectId.isNotEmpty())
+        {
+            if (creation::assets::ProjectWorkspaceService::openProject(suiteSettings_, lastProjectId, projectSession_, errorMessage))
+            {
+                headerBar_.setProjectLabel("Project: " + projectSession_.getManifest().projectName);
+                loadSessionFromDisk();
+                return true;
+            }
+        }
+    }
+
+    auto availableProjects = creation::assets::ProjectContainerService::listProjects(
+        suiteSettings_, creation::assets::SuiteAppDomain::engineer, errorMessage);
+
+    if (! availableProjects.isEmpty())
+    {
+        if (creation::assets::ProjectWorkspaceService::openProject(suiteSettings_, availableProjects.getFirst().projectId, projectSession_, errorMessage))
+        {
+            headerBar_.setProjectLabel("Project: " + projectSession_.getManifest().projectName);
+            loadSessionFromDisk();
+            return true;
+        }
+    }
+
+    createNewProject();
+    return false;
+}
+
+void MainComponent::saveAppSettings()
+{
+    auto* object = new juce::DynamicObject();
+    if (projectSession_.isValid())
+        object->setProperty("lastOpenedProjectId", projectSession_.getProjectId());
+
+    juce::String errorMessage;
+    creation::services::SuiteVfsJsonStore::saveJson("engineer-settings.json", juce::var(object), errorMessage);
+}
+
+void MainComponent::loadAppSettings()
+{
 }

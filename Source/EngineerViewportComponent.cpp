@@ -193,6 +193,21 @@ Mat4 objectModelMatrix(const EngineerSceneModel::SceneObject& object, bool mirro
     return multiply(translationMatrix(objectCentreFor(object, mirrored)), scaleMatrix(objectScaleFor(object)));
 }
 
+Mat4 floorModelMatrix()
+{
+    return multiply(translationMatrix({ 0.0f, -0.12f, 0.0f }), scaleMatrix({ 18.0f, 0.12f, 18.0f }));
+}
+
+Mat4 originBlockModelMatrix()
+{
+    return multiply(translationMatrix({ 0.0f, 0.5f, 0.0f }), scaleMatrix({ 0.5f, 0.5f, 0.5f }));
+}
+
+Mat4 referenceColumnModelMatrix()
+{
+    return multiply(translationMatrix({ -6.0f, 1.5f, -6.0f }), scaleMatrix({ 0.35f, 1.5f, 0.35f }));
+}
+
 std::vector<float> makeBoxVertices()
 {
     std::vector<float> vertices;
@@ -468,6 +483,7 @@ EngineerViewportComponent::EngineerViewportComponent(EngineerSceneModel& model)
 {
     sceneModel.addListener(this);
     applyCameraPreset(sceneModel.getCameraPreset());
+    lastFrameTimeSeconds = juce::Time::getMillisecondCounterHiRes() / 1000.0;
 
     interactionOverlay = std::make_unique<InteractionOverlay>(*this);
     addAndMakeVisible(*interactionOverlay);
@@ -498,7 +514,7 @@ void EngineerViewportComponent::paintOverlay(juce::Graphics& g) const
 
     g.setColour(juce::Colour(0xffc2cfde));
     g.setFont(juce::Font(juce::FontOptions(13.0f)));
-    g.drawText("Orbit: middle drag or drag empty space   Pan: shift+drag empty space   Zoom: wheel   Menu: right-click",
+    g.drawText("Look: right drag   Fly: WASD + Q/E   Speed: wheel while looking   Orbit: middle drag   Pan: shift+drag   Menu: right-click",
                12, 34, getWidth() - 24, 18, juce::Justification::left, true);
 
     const auto& selected = sceneModel.getSelectedObject();
@@ -522,6 +538,16 @@ void EngineerViewportComponent::mouseDown(const juce::MouseEvent& event)
     mouseDownPoint = event.position;
     popupMenuTriggered = false;
     pendingBackgroundNavigation = false;
+    lookDragMoved = false;
+
+    if (event.mods.isRightButtonDown())
+    {
+        isLooking.store(true, std::memory_order_relaxed);
+        lastLookScreenPos = event.getScreenPosition().toFloat();
+        setMouseCursor(juce::MouseCursor::NoCursor);
+        event.source.enableUnboundedMouseMovement(true);
+        return;
+    }
 
     if (event.mods.isPopupMenu())
     {
@@ -559,6 +585,26 @@ void EngineerViewportComponent::mouseDown(const juce::MouseEvent& event)
 
 void EngineerViewportComponent::mouseDrag(const juce::MouseEvent& event)
 {
+    if (isLooking.load(std::memory_order_relaxed))
+    {
+        const auto currentPos = event.getScreenPosition().toFloat();
+        const auto delta = currentPos - lastLookScreenPos;
+        lastLookScreenPos = currentPos;
+
+        if (std::abs(delta.x) > 0.01f || std::abs(delta.y) > 0.01f)
+            lookDragMoved = true;
+
+        constexpr float sensitivity = 0.005f;
+        yawRadians.store(yawRadians.load(std::memory_order_relaxed) + delta.x * sensitivity,
+                         std::memory_order_relaxed);
+        pitchRadians.store(juce::jlimit(-1.5f,
+                                        1.5f,
+                                        pitchRadians.load(std::memory_order_relaxed) - delta.y * sensitivity),
+                           std::memory_order_relaxed);
+        updateViewMatrices();
+        return;
+    }
+
     if (!isNavigatingView && pendingBackgroundNavigation && event.mods.isLeftButtonDown())
     {
         const auto dragDistance = event.position.getDistanceFrom(mouseDownPoint);
@@ -631,8 +677,9 @@ void EngineerViewportComponent::mouseDrag(const juce::MouseEvent& event)
 
     if (event.mods.isShiftDown())
     {
-        const auto right = Vec3 { std::cos(yawRadians), 0.0f, -std::sin(yawRadians) };
-        const auto forward = Vec3 { std::sin(yawRadians), 0.0f, std::cos(yawRadians) };
+        const auto yaw = yawRadians.load(std::memory_order_relaxed);
+        const auto right = Vec3 { std::cos(yaw), 0.0f, -std::sin(yaw) };
+        const auto forward = Vec3 { std::sin(yaw), 0.0f, std::cos(yaw) };
         orbitTarget.x -= right.x * delta.x * 0.03f;
         orbitTarget.z -= right.z * delta.x * 0.03f;
         orbitTarget.x += forward.x * delta.y * 0.03f;
@@ -640,8 +687,12 @@ void EngineerViewportComponent::mouseDrag(const juce::MouseEvent& event)
     }
     else
     {
-        yawRadians += delta.x * 0.010f;
-        pitchRadians = juce::jlimit(-1.42f, -0.08f, pitchRadians - delta.y * 0.008f);
+        yawRadians.store(yawRadians.load(std::memory_order_relaxed) + delta.x * 0.010f,
+                         std::memory_order_relaxed);
+        pitchRadians.store(juce::jlimit(-1.42f,
+                                        -0.08f,
+                                        pitchRadians.load(std::memory_order_relaxed) - delta.y * 0.008f),
+                           std::memory_order_relaxed);
     }
 
     updateViewMatrices();
@@ -649,7 +700,20 @@ void EngineerViewportComponent::mouseDrag(const juce::MouseEvent& event)
 
 void EngineerViewportComponent::mouseUp(const juce::MouseEvent& event)
 {
-    if (!popupMenuTriggered && event.mods.isPopupMenu() && event.position.getDistanceFrom(mouseDownPoint) < 3.0f)
+    if (isLooking.load(std::memory_order_relaxed) && !event.mods.isRightButtonDown())
+    {
+        isLooking.store(false, std::memory_order_relaxed);
+        setMouseCursor(juce::MouseCursor::NormalCursor);
+        event.source.enableUnboundedMouseMovement(false);
+
+        if (!popupMenuTriggered && event.mods.isPopupMenu() && !lookDragMoved
+            && event.position.getDistanceFrom(mouseDownPoint) < 3.0f)
+        {
+            showContextMenu(event);
+            popupMenuTriggered = true;
+        }
+    }
+    else if (!popupMenuTriggered && event.mods.isPopupMenu() && event.position.getDistanceFrom(mouseDownPoint) < 3.0f)
     {
         showContextMenu(event);
         popupMenuTriggered = true;
@@ -663,6 +727,14 @@ void EngineerViewportComponent::mouseUp(const juce::MouseEvent& event)
 
 void EngineerViewportComponent::mouseWheelMove(const juce::MouseEvent&, const juce::MouseWheelDetails& wheel)
 {
+    if (isLooking.load(std::memory_order_relaxed))
+    {
+        const auto current = flySpeedMultiplier.load(std::memory_order_relaxed);
+        flySpeedMultiplier.store(juce::jlimit(0.1f, 10.0f, current * (1.0f + wheel.deltaY * 0.2f)),
+                                 std::memory_order_relaxed);
+        return;
+    }
+
     orbitDistance = juce::jlimit(4.0f, 70.0f, orbitDistance - wheel.deltaY * 3.5f);
     updateViewMatrices();
 }
@@ -746,6 +818,10 @@ void EngineerViewportComponent::renderOpenGL()
     glViewport(0, 0, juce::roundToInt(scale * static_cast<float>(getWidth())),
                juce::roundToInt(scale * static_cast<float>(getHeight())));
 
+    const auto nowSeconds = juce::Time::getMillisecondCounterHiRes() / 1000.0;
+    const auto deltaSeconds = static_cast<float>(nowSeconds - lastFrameTimeSeconds);
+    lastFrameTimeSeconds = nowSeconds;
+    updateFlyCamera(deltaSeconds);
     updateViewMatrices();
     renderScene();
 }
@@ -833,18 +909,21 @@ void EngineerViewportComponent::applyCameraPreset(EngineerSceneModel::CameraPres
             pitchRadians = -0.55f;
             orbitDistance = 19.0f;
             useOrthographicProjection = false;
+            flyCameraPosition = { -7.2f, 8.0f, 9.2f };
             break;
         case EngineerSceneModel::CameraPreset::top:
             yawRadians = 0.0f;
             pitchRadians = -1.40f;
             orbitDistance = 24.0f;
             useOrthographicProjection = true;
+            flyCameraPosition = { 0.0f, 18.0f, 0.1f };
             break;
         case EngineerSceneModel::CameraPreset::walk:
             yawRadians = 0.58f;
             pitchRadians = -0.22f;
             orbitDistance = 11.0f;
             useOrthographicProjection = false;
+            flyCameraPosition = { -3.5f, 2.0f, 7.0f };
             break;
     }
 
@@ -995,6 +1074,48 @@ void EngineerViewportComponent::renderObject(const EngineerSceneModel::SceneObje
         glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
         glEnable(GL_CULL_FACE);
     }
+}
+
+void EngineerViewportComponent::updateFlyCamera(float deltaSeconds)
+{
+    if (!isLooking || !juce::Process::isForegroundProcess())
+        return;
+
+    const auto forward = flyCameraForward();
+    const auto flatForward = flyCameraFlatForward();
+    const auto right = flatForward ^ juce::Vector3D<float>{ 0.0f, 1.0f, 0.0f };
+    const float speed = 3.0f * deltaSeconds * flySpeedMultiplier;
+
+    if (juce::KeyPress::isKeyCurrentlyDown('W'))
+        flyCameraPosition += forward * speed;
+    if (juce::KeyPress::isKeyCurrentlyDown('S'))
+        flyCameraPosition -= forward * speed;
+    if (juce::KeyPress::isKeyCurrentlyDown('A'))
+        flyCameraPosition -= right * speed;
+    if (juce::KeyPress::isKeyCurrentlyDown('D'))
+        flyCameraPosition += right * speed;
+    if (juce::KeyPress::isKeyCurrentlyDown('E'))
+        flyCameraPosition.y += speed;
+    if (juce::KeyPress::isKeyCurrentlyDown('Q'))
+        flyCameraPosition.y -= speed;
+}
+
+juce::Vector3D<float> EngineerViewportComponent::flyCameraForward() const
+{
+    return {
+        std::sin(yawRadians) * std::cos(pitchRadians),
+        std::sin(pitchRadians),
+        -std::cos(yawRadians) * std::cos(pitchRadians)
+    };
+}
+
+juce::Vector3D<float> EngineerViewportComponent::flyCameraFlatForward() const
+{
+    return {
+        std::sin(yawRadians),
+        0.0f,
+        -std::cos(yawRadians)
+    };
 }
 
 void EngineerViewportComponent::drawOverlayGizmo(juce::Graphics& g) const
@@ -1170,13 +1291,23 @@ void EngineerViewportComponent::updateViewMatrices()
     if (viewMode == ViewMode::planarLayer)
         useOrthographicProjection = true;
 
-    const auto cameraOffset = Vec3 {
-        std::cos(pitchRadians) * std::sin(yawRadians) * orbitDistance,
-        std::sin(-pitchRadians) * orbitDistance,
-        std::cos(pitchRadians) * std::cos(yawRadians) * orbitDistance
-    };
-    const auto eye = Vec3 { orbitTarget.x + cameraOffset.x, orbitTarget.y + cameraOffset.y, orbitTarget.z + cameraOffset.z };
-    viewMatrix = lookAtMatrix(eye, { orbitTarget.x, orbitTarget.y, orbitTarget.z }, { 0.0f, 1.0f, 0.0f });
+    if (sceneModel.getCameraPreset() == EngineerSceneModel::CameraPreset::walk || isLooking)
+    {
+        const auto forward = flyCameraForward();
+        viewMatrix = lookAtMatrix({ flyCameraPosition.x, flyCameraPosition.y, flyCameraPosition.z },
+                                  { flyCameraPosition.x + forward.x, flyCameraPosition.y + forward.y, flyCameraPosition.z + forward.z },
+                                  { 0.0f, 1.0f, 0.0f });
+    }
+    else
+    {
+        const auto cameraOffset = Vec3 {
+            std::cos(pitchRadians) * std::sin(yawRadians) * orbitDistance,
+            std::sin(-pitchRadians) * orbitDistance,
+            std::cos(pitchRadians) * std::cos(yawRadians) * orbitDistance
+        };
+        const auto eye = Vec3 { orbitTarget.x + cameraOffset.x, orbitTarget.y + cameraOffset.y, orbitTarget.z + cameraOffset.z };
+        viewMatrix = lookAtMatrix(eye, { orbitTarget.x, orbitTarget.y, orbitTarget.z }, { 0.0f, 1.0f, 0.0f });
+    }
 
     const auto aspect = area.getWidth() / area.getHeight();
     if (useOrthographicProjection)
@@ -1194,6 +1325,9 @@ void EngineerViewportComponent::updateViewMatrices()
 
 juce::Vector3D<float> EngineerViewportComponent::getCameraPosition() const noexcept
 {
+    if (sceneModel.getCameraPreset() == EngineerSceneModel::CameraPreset::walk || isLooking)
+        return flyCameraPosition;
+
     return {
         orbitTarget.x + std::cos(pitchRadians) * std::sin(yawRadians) * orbitDistance,
         orbitTarget.y + std::sin(-pitchRadians) * orbitDistance,

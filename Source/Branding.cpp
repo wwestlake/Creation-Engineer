@@ -1,4 +1,17 @@
 #include "Branding.h"
+#include <creation/ui/CreationSuiteLogos.h>
+
+namespace branding
+{
+juce::Image CreateLogoImage(int size)
+{
+    auto source = creation::ui::getSuiteLogoImage(creation::ui::SuiteLogoId::engineer);
+    if (! source.isValid())
+        return {};
+
+    return source.rescaled(size, size, juce::Graphics::highResamplingQuality);
+}
+}
 
 namespace creation_engineer::branding
 {

@@ -2,6 +2,7 @@
 
 #include <JuceHeader.h>
 #include <array>
+#include <atomic>
 #include <memory>
 #include <vector>
 
@@ -94,9 +95,13 @@ private:
                          GLenum primitiveType);
     void renderScene();
     void renderGrid() const;
+    void renderReferenceScene() const;
     void renderObject(const EngineerSceneModel::SceneObject& object,
                       bool selected,
                       bool mirrored) const;
+    void updateFlyCamera(float deltaSeconds);
+    juce::Vector3D<float> flyCameraForward() const;
+    juce::Vector3D<float> flyCameraFlatForward() const;
     void paintOverlay(juce::Graphics& g) const;
     void drawOverlayGizmo(juce::Graphics& g) const;
     int hitTestObject(juce::Point<float> point) const;
@@ -118,16 +123,22 @@ private:
 
     juce::Point<float> dragAnchor;
     juce::Point<float> mouseDownPoint;
+    juce::Point<float> lastLookScreenPos;
     bool isNavigatingView = false;
     bool isDraggingGizmo = false;
+    std::atomic<bool> isLooking { false };
+    bool lookDragMoved = false;
     bool pendingBackgroundNavigation = false;
     bool popupMenuTriggered = false;
     GizmoDragMode gizmoDragMode = GizmoDragMode::none;
     juce::Vector3D<float> orbitTarget { 0.0f, 0.0f, 0.0f };
+    juce::Vector3D<float> flyCameraPosition { 0.0f, 1.6f, 5.0f };
     float orbitDistance = 18.0f;
-    float yawRadians = 0.72f;
-    float pitchRadians = -0.48f;
+    std::atomic<float> yawRadians { 0.72f };
+    std::atomic<float> pitchRadians { -0.48f };
     bool useOrthographicProjection = false;
+    std::atomic<float> flySpeedMultiplier { 1.0f };
+    double lastFrameTimeSeconds = 0.0;
 
     std::array<float, 16> projectionMatrix {};
     std::array<float, 16> viewMatrix {};

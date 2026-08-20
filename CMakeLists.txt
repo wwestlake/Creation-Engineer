@@ -10,112 +10,132 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 include("${CMAKE_CURRENT_SOURCE_DIR}/../../shared/CMake/CreationSuiteBuildSettings.cmake")
 creation_suite_require_juce()
 
-if(MSVC)
-    string(APPEND CMAKE_CXX_FLAGS_RELEASE " /Zi")
-    string(APPEND CMAKE_EXE_LINKER_FLAGS_RELEASE " /DEBUG /OPT:REF /OPT:ICF")
-    string(APPEND CMAKE_SHARED_LINKER_FLAGS_RELEASE " /DEBUG /OPT:REF /OPT:ICF")
-    string(APPEND CMAKE_MODULE_LINKER_FLAGS_RELEASE " /DEBUG /OPT:REF /OPT:ICF")
-endif()
-
-set(CREATION_SUITE_SHARED_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../shared" CACHE PATH "Path to the Creation Suite shared code root")
-
-include(cmake/CreationSharedLLVM.cmake)
-configure_creation_shared_llvm(CREATION_ENGINEER "Creation Engineer")
-
 add_subdirectory("${JUCE_DIR}" juce)
-add_subdirectory(Language)
 
-set(CREATION_ENGINEER_VFS_TARGET "")
-if(EXISTS "${CREATION_SUITE_SHARED_DIR}/VFS/CMakeLists.txt")
-    add_subdirectory("${CREATION_SUITE_SHARED_DIR}/VFS"
-                     "${CMAKE_CURRENT_BINARY_DIR}/CreationSuiteSharedVFS")
-    set(CREATION_ENGINEER_VFS_TARGET creation_suite_vfs)
+set(CREATION_ENGINE_APP_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../CreationEngine")
+set(CREATION_ENGINE_SOURCE_DIR "${CREATION_ENGINE_APP_DIR}/Source")
+
+if(EXISTS "${CREATION_ENGINE_APP_DIR}/third_party/entt/CMakeLists.txt")
+    add_subdirectory("${CREATION_ENGINE_APP_DIR}/third_party/entt"
+                     "${CMAKE_CURRENT_BINARY_DIR}/CreationEngineThirdPartyEntt")
+else()
+    message(FATAL_ERROR "Could not find the entt dependency in apps/CreationEngine. Run `git submodule update --init --recursive` first.")
 endif()
 
-set(CREATION_ENGINEER_ASSET_SYSTEM_TARGET "")
-if(EXISTS "${CREATION_SUITE_SHARED_DIR}/AssetSystem/CMakeLists.txt")
-    add_subdirectory("${CREATION_SUITE_SHARED_DIR}/AssetSystem"
-                     "${CMAKE_CURRENT_BINARY_DIR}/CreationSuiteSharedAssetSystem")
-    set(CREATION_ENGINEER_ASSET_SYSTEM_TARGET creation_suite_asset_system)
+if(EXISTS "${CREATION_ENGINE_APP_DIR}/NodeSystem/CMakeLists.txt")
+    add_subdirectory("${CREATION_ENGINE_APP_DIR}/NodeSystem"
+                     "${CMAKE_CURRENT_BINARY_DIR}/CreationEngineNodeSystem")
+    if(NOT TARGET creation_suite_node_system)
+        add_library(creation_suite_node_system ALIAS node_system)
+    endif()
+else()
+    message(FATAL_ERROR "Could not find NodeSystem in apps/CreationEngine.")
 endif()
 
-set(CREATION_ENGINEER_SERVICES_TARGET "")
-if(EXISTS "${CREATION_SUITE_SHARED_DIR}/Services/CMakeLists.txt")
-    add_subdirectory("${CREATION_SUITE_SHARED_DIR}/Services"
-                     "${CMAKE_CURRENT_BINARY_DIR}/CreationSuiteSharedServices")
-    set(CREATION_ENGINEER_SERVICES_TARGET creation_suite_services)
+if(EXISTS "${CREATION_ENGINE_APP_DIR}/EngineCore/CMakeLists.txt")
+    add_subdirectory("${CREATION_ENGINE_APP_DIR}/EngineCore"
+                     "${CMAKE_CURRENT_BINARY_DIR}/CreationEngineCore")
+else()
+    message(FATAL_ERROR "Could not find EngineCore in apps/CreationEngine.")
 endif()
 
-set(CREATION_ENGINEER_UI_TARGET "")
-if(EXISTS "${CREATION_SUITE_SHARED_DIR}/UI/CMakeLists.txt")
-    add_subdirectory("${CREATION_SUITE_SHARED_DIR}/UI"
-                     "${CMAKE_CURRENT_BINARY_DIR}/CreationSuiteSharedUI")
-    set(CREATION_ENGINEER_UI_TARGET creation_suite_ui)
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/CEL/CMakeLists.txt")
+    add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../../shared/CEL"
+                     "${CMAKE_CURRENT_BINARY_DIR}/CreationSuiteSharedCel")
+else()
+    message(FATAL_ERROR "Could not find shared/CEL.")
 endif()
 
-set(CREATION_ENGINEER_DOCKING_TARGET "")
-if(EXISTS "${CREATION_SUITE_SHARED_DIR}/JuceDocking/CMakeLists.txt")
-    add_subdirectory("${CREATION_SUITE_SHARED_DIR}/JuceDocking"
-                     "${CMAKE_CURRENT_BINARY_DIR}/CreationSuiteSharedDocking")
-    set(CREATION_ENGINEER_DOCKING_TARGET juce_docking)
+if(EXISTS "${CREATION_ENGINE_APP_DIR}/Language/CMakeLists.txt")
+    add_subdirectory("${CREATION_ENGINE_APP_DIR}/Language"
+                     "${CMAKE_CURRENT_BINARY_DIR}/CreationEngineLanguage")
+else()
+    message(FATAL_ERROR "Could not find Language in apps/CreationEngine.")
 endif()
 
-set(CREATION_ENGINEER_INTEROP_TARGET "")
-if(EXISTS "${CREATION_SUITE_SHARED_DIR}/Interop/CMakeLists.txt")
-    add_subdirectory("${CREATION_SUITE_SHARED_DIR}/Interop"
-                     "${CMAKE_CURRENT_BINARY_DIR}/CreationSuiteSharedInterop")
-    set(CREATION_ENGINEER_INTEROP_TARGET creation_suite_interop)
-endif()
+add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../../shared/VFS" CreationSuiteSharedVFS)
+add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../../shared/AssetSystem" CreationSuiteSharedAssetSystem)
+add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../../shared/Services" CreationSuiteSharedServices)
+add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../../shared/UI" CreationSuiteSharedUI)
 
 juce_add_gui_app(CreationEngineerApp
     PRODUCT_NAME "Creation Engineer"
     COMPANY_NAME "LagDaemon Software"
     BUNDLE_ID "com.lagdaemon.creationengineer"
+    ICON_BIG "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/UI/assets/creation_engineer.png"
+    ICON_SMALL "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/UI/assets/creation_engineer.png"
 )
 
 creation_suite_add_shared_bin_copy(CreationEngineerApp)
-
 juce_generate_juce_header(CreationEngineerApp)
 
+file(GLOB_RECURSE CREATION_ENGINE_RENDER_SOURCES CONFIGURE_DEPENDS
+    "${CREATION_ENGINE_SOURCE_DIR}/Render/*.cpp"
+    "${CREATION_ENGINE_SOURCE_DIR}/Render/*.h"
+)
+
+file(GLOB_RECURSE CREATION_ENGINE_VIEW_SOURCES CONFIGURE_DEPENDS
+    "${CREATION_ENGINE_SOURCE_DIR}/Views/*.cpp"
+    "${CREATION_ENGINE_SOURCE_DIR}/Views/*.h"
+)
+
+file(GLOB_RECURSE CREATION_ENGINE_SCENE_SOURCES CONFIGURE_DEPENDS
+    "${CREATION_ENGINE_SOURCE_DIR}/Scene/*.cpp"
+    "${CREATION_ENGINE_SOURCE_DIR}/Scene/*.h"
+)
+
+file(GLOB_RECURSE CREATION_ENGINE_IMPORT_SOURCES CONFIGURE_DEPENDS
+    "${CREATION_ENGINE_SOURCE_DIR}/Import/*.cpp"
+    "${CREATION_ENGINE_SOURCE_DIR}/Import/*.h"
+)
+
+file(GLOB_RECURSE CREATION_ENGINE_AUDIO_SOURCES CONFIGURE_DEPENDS
+    "${CREATION_ENGINE_SOURCE_DIR}/Audio/*.cpp"
+    "${CREATION_ENGINE_SOURCE_DIR}/Audio/*.h"
+)
+
 target_sources(CreationEngineerApp PRIVATE
-    Source/EngineerGeometryElementsComponent.cpp
-    Source/EngineerGeometryElementsComponent.h
-    Source/EngineerGeometryToolsComponent.cpp
-    Source/EngineerGeometryToolsComponent.h
-    Source/EngineerModifiersComponent.cpp
-    Source/EngineerModifiersComponent.h
-    Source/EngineerNavigatorComponent.cpp
-    Source/EngineerNavigatorComponent.h
-    Source/EngineerPropertiesComponent.cpp
-    Source/EngineerPropertiesComponent.h
-    Source/EngineerSceneModel.cpp
-    Source/EngineerSceneModel.h
     Source/Main.cpp
-    Source/EngineerViewportComponent.cpp
-    Source/EngineerViewportComponent.h
     Source/MainComponent.cpp
     Source/MainComponent.h
     Source/Branding.cpp
     Source/Branding.h
-    Source/Shared/CreationSuiteHeaderBar.h
+    ${CREATION_ENGINE_RENDER_SOURCES}
+    ${CREATION_ENGINE_VIEW_SOURCES}
+    ${CREATION_ENGINE_SCENE_SOURCES}
+    ${CREATION_ENGINE_IMPORT_SOURCES}
+    ${CREATION_ENGINE_AUDIO_SOURCES}
+)
+
+target_include_directories(CreationEngineerApp PRIVATE
+    Source
+    "${CREATION_ENGINE_SOURCE_DIR}"
+    "${CREATION_ENGINE_APP_DIR}/third_party"
 )
 
 target_compile_definitions(CreationEngineerApp PRIVATE
     JUCE_WEB_BROWSER=0
     JUCE_USE_CURL=0
+    JUCE_OPENGL3=1
+    CE_ENABLE_SCRIPTING=0
     JUCE_APPLICATION_NAME_STRING="$<TARGET_PROPERTY:CreationEngineerApp,JUCE_PRODUCT_NAME>"
     JUCE_APPLICATION_VERSION_STRING="$<TARGET_PROPERTY:CreationEngineerApp,JUCE_VERSION>"
+    CE_SHADER_SOURCE_DIR="${CREATION_ENGINE_SOURCE_DIR}/Render/Shaders"
+    CE_ASSET_SOURCE_DIR="${CREATION_ENGINE_APP_DIR}/assets"
 )
 
 target_link_libraries(CreationEngineerApp PRIVATE
-    ${CREATION_ENGINEER_ASSET_SYSTEM_TARGET}
-    ${CREATION_ENGINEER_SERVICES_TARGET}
-    ${CREATION_ENGINEER_UI_TARGET}
-    ${CREATION_ENGINEER_DOCKING_TARGET}
-    ${CREATION_ENGINEER_INTEROP_TARGET}
-    creation_engineer_language_host
-    juce::juce_opengl
+    engine_core
+    node_system
+    ce_lang_frontend
+    ce_lang_nodegen
+    ce_engine_lang_world
+    creation_suite_asset_system
+    creation_suite_services
+    creation_suite_ui
+    creation_suite_ui_assets
     juce::juce_gui_extra
+    juce::juce_opengl
     juce::juce_audio_basics
     juce::juce_audio_devices
     juce::juce_audio_formats
@@ -123,4 +143,3 @@ target_link_libraries(CreationEngineerApp PRIVATE
     juce::juce_recommended_lto_flags
     juce::juce_recommended_warning_flags
 )
-
