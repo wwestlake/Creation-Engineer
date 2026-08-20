@@ -41,6 +41,8 @@ public:
     ViewMode getViewMode() const noexcept;
 
 private:
+    class InteractionOverlay;
+
     struct ProjectedObjectBounds
     {
         int index = -1;
@@ -95,6 +97,7 @@ private:
     void renderObject(const EngineerSceneModel::SceneObject& object,
                       bool selected,
                       bool mirrored) const;
+    void paintOverlay(juce::Graphics& g) const;
     void drawOverlayGizmo(juce::Graphics& g) const;
     int hitTestObject(juce::Point<float> point) const;
     GizmoDragMode hitTestGizmo(juce::Point<float> point) const;
@@ -106,6 +109,7 @@ private:
     ViewMode viewMode = ViewMode::design3D;
     EngineerSceneModel& sceneModel;
     juce::OpenGLContext openGLContext;
+    std::unique_ptr<InteractionOverlay> interactionOverlay;
     ShaderHandles shader;
     MeshBuffer boxMesh;
     MeshBuffer cylinderMesh;
