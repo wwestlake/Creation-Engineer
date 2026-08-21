@@ -3,26 +3,22 @@
 #include <JuceHeader.h>
 #include <creation/ui/CreationSuiteHeaderBar.h>
 #include <creation/ui/SuiteShellController.h>
+#include <CreationDock/DockManager.h>
 
-#include "engine/simulation.h"
-#include "engine/world.h"
-#include "Render/ViewportComponent.h"
-#include "Views/HierarchyPanel.h"
-#include "Views/ImportPanel.h"
-#include "Views/LightPanel.h"
-#include "Views/MaterialsPanel.h"
-#include "Views/NodeEditor/LogicPanel.h"
-#include "Views/PlaceholderPanel.h"
-#include "Views/ScriptPanel.h"
-#include "Views/TransformPanel.h"
-#include "Views/ViewModeBar.h"
+#include "EngineerSceneModel.h"
+#include "EngineerViewportComponent.h"
+#include "EngineerNavigatorComponent.h"
+#include "EngineerPropertiesComponent.h"
+#include "EngineerModifiersComponent.h"
+#include "EngineerGeometryElementsComponent.h"
+#include "EngineerGeometryToolsComponent.h"
 
 #include <creation/assets/ProjectSession.h>
 #include <creation/assets/ProjectWorkspaceService.h>
 #include <creation/suite/SuiteSettings.h>
 
 class MainComponent final : public juce::Component,
-                            private juce::Timer
+                            private juce::MenuBarModel
 {
 public:
     MainComponent();
@@ -32,10 +28,6 @@ public:
     void resized() override;
 
 private:
-    void timerCallback() override;
-    void SetActiveMode(ce::WorkspaceMode mode);
-    void SetPlaying(bool playing);
-
     void createNewProject();
     void openProject(const juce::String& projectId);
     void saveSessionToDisk(bool userInitiated = false);
@@ -44,32 +36,34 @@ private:
     void saveAppSettings();
     void loadAppSettings();
 
+    juce::StringArray getMenuBarNames() override;
+    juce::PopupMenu getMenuForIndex(int topLevelMenuIndex, const juce::String&) override;
+    void menuItemSelected(int menuItemID, int topLevelMenuIndex) override;
+    void initialiseDockingWorkspace();
+    void toggleDockPanel(const juce::String& panelId, CreationDock::DockTargetZone fallbackZone);
+
+    std::unique_ptr<juce::MenuBarComponent> menuBar_;
+    std::unique_ptr<CreationDock::DockManager> dockManager_;
+
     creation::suite::SuiteSettings suiteSettings_;
     creation::suite::SuiteSettingsStore suiteSettingsStore_;
     creation::assets::ProjectSession projectSession_;
     bool projectDirty_ = false;
 
-    ce::engine::World world_;
-    bool isPlaying_ = false;
-
     CreationSuiteHeaderBar headerBar_;
     creation::ui::SuiteShellController suiteShellController_;
-    ce::ViewModeBar viewModeBar_;
-    ce::WorkspaceMode activeMode_ = ce::WorkspaceMode::Scene;
 
-    ce::ViewportComponent viewport_;
-    ce::HierarchyPanel hierarchyPanel_;
-    juce::Label inspectorTitle_ { {}, "Inspector" };
-    juce::Label tickLabel_;
-    ce::TransformPanel transformPanel_;
-    ce::ScriptPanel scriptPanel_;
-    ce::MaterialsPanel pbrMaterialPanel_;
-    ce::LightPanel lightPanel_;
-    ce::ImportPanel importPanel_;
-    ce::LogicPanel logicPanel_;
-    ce::PlaceholderPanel materialsPanel_ { "Materials", "Node-based material editor - coming soon" };
-    ce::PlaceholderPanel serverPanel_ { "Server", "Dedicated server operational view - coming soon" };
-    ce::PlaceholderPanel settingsPanel_ { "Settings", "Application settings - coming soon" };
+    // Real Creation Engineer workspace (geometry model + the six panels that
+    // observe it directly via EngineerSceneModel::Listener) -- replaces the
+    // borrowed CreationEngine shell (ce::World/ViewportComponent/HierarchyPanel/
+    // etc.) this app used to run as a placeholder. See docking rollout plan.
+    EngineerSceneModel sceneModel_;
+    EngineerNavigatorComponent navigatorPanel_;
+    EngineerPropertiesComponent propertiesPanel_;
+    EngineerModifiersComponent modifiersPanel_;
+    EngineerGeometryElementsComponent geometryElementsPanel_;
+    EngineerGeometryToolsComponent geometryToolsPanel_;
+    EngineerViewportComponent viewport_;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MainComponent)
 };

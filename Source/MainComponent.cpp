@@ -3,17 +3,50 @@
 #include <creation/services/SuiteVfsJsonStore.h>
 #include <creation/ui/CreationSuiteLogos.h>
 
-#include "Scene/EngineSceneSerializer.h"
+namespace
+{
+// Wraps an existing component (not owned) as a dock panel's content, filling
+// whatever bounds the dock zone/tab gives it.
+class NonOwningPanelHost final : public juce::Component
+{
+public:
+    explicit NonOwningPanelHost(juce::Component& contentToHost) : content(contentToHost)
+    {
+        addAndMakeVisible(content);
+    }
+
+    void resized() override
+    {
+        content.setBounds(getLocalBounds());
+    }
+
+private:
+    juce::Component& content;
+};
+
+const juce::String panelIdNavigator = "navigator";
+const juce::String panelIdViewport = "viewport";
+const juce::String panelIdProperties = "properties";
+const juce::String panelIdModifiers = "modifiers";
+const juce::String panelIdGeometryElements = "geometryElements";
+const juce::String panelIdGeometryTools = "geometryTools";
+
+constexpr int menuIdPanelNavigator = 3001;
+constexpr int menuIdPanelViewport = 3002;
+constexpr int menuIdPanelProperties = 3003;
+constexpr int menuIdPanelModifiers = 3004;
+constexpr int menuIdPanelGeometryElements = 3005;
+constexpr int menuIdPanelGeometryTools = 3006;
+constexpr int menuIdResetLayout = 3007;
+}
 
 MainComponent::MainComponent()
-    : viewport_(world_),
-      hierarchyPanel_(world_, viewport_),
-      transformPanel_(world_),
-      scriptPanel_(world_, viewport_),
-      pbrMaterialPanel_(world_),
-      importPanel_(world_, viewport_),
-      lightPanel_(viewport_),
-      logicPanel_(world_) {
+    : navigatorPanel_(sceneModel_),
+      propertiesPanel_(sceneModel_),
+      modifiersPanel_(sceneModel_),
+      geometryElementsPanel_(sceneModel_),
+      geometryToolsPanel_(sceneModel_),
+      viewport_(sceneModel_) {
     juce::String suiteErr;
     suiteSettings_ = suiteSettingsStore_.load(suiteErr);
 
@@ -27,6 +60,10 @@ MainComponent::MainComponent()
     headerBar_.setTransportButtonVisible(CreationSuiteHeaderBar::TransportButtonSlot::record, false);
     headerBar_.setTransportButtonVisible(CreationSuiteHeaderBar::TransportButtonSlot::loop, false);
     headerBar_.setTransportButtonVisible(CreationSuiteHeaderBar::TransportButtonSlot::click, false);
+    // No simulation to play/pause/stop -- this is a geometry editor, not the
+    // old borrowed Engine shell's play-in-viewport transport.
+    headerBar_.setTransportButtonVisible(CreationSuiteHeaderBar::TransportButtonSlot::stop, false);
+    headerBar_.setTransportButtonVisible(CreationSuiteHeaderBar::TransportButtonSlot::playPause, false);
     suiteShellController_.attach(headerBar_,
                                  {
                                      "Creation Engineer",
@@ -50,56 +87,38 @@ MainComponent::MainComponent()
         suiteShellController_.showProjectBrowser();
     };
     addAndMakeVisible(headerBar_);
-    headerBar_.onPlay = [this] { SetPlaying(true); };
-    headerBar_.onPause = [this] { SetPlaying(false); };
-    headerBar_.onStop = [this] {
-        SetPlaying(false);
-        world_.ResetTick();
-        viewport_.ResetDemoEntityTransform();
-        headerBar_.setStatusText("Stopped");
-    };
     headerBar_.setStatusText("Editing");
 
-    addAndMakeVisible(viewModeBar_);
-    viewModeBar_.onModeSelected = [this](ce::WorkspaceMode mode) { SetActiveMode(mode); };
+    // navigatorPanel_/propertiesPanel_/modifiersPanel_/geometryElementsPanel_/
+    // geometryToolsPanel_/viewport_ are reparented into dock panels below (see
+    // initialiseDockingWorkspace) -- they self-register with sceneModel_ via
+    // EngineerSceneModel::Listener in their own constructors, so no manual
+    // cross-panel wiring is needed here (contrast the old hierarchyPanel_.
+    // onSelectionChanged fan-out this MainComponent used to hand-wire).
 
-    addAndMakeVisible(hierarchyPanel_);
-    hierarchyPanel_.onSelectionChanged = [this](entt::entity entity) {
-        transformPanel_.SetSelectedEntity(entity);
-        scriptPanel_.SetSelectedEntity(entity);
-        pbrMaterialPanel_.SetSelectedEntity(entity);
-        logicPanel_.SetSelectedEntity(entity);
-    };
-    addAndMakeVisible(viewport_);
+    menuBar_ = std::make_unique<juce::MenuBarComponent>(static_cast<juce::MenuBarModel*>(this));
+    // Nothing in this app sets a suite-wide dark LookAndFeel, so MenuBarComponent
+    // falls back to LookAndFeel_V4::drawMenuBarItem/drawMenuBarBackground, which key
+    // off TextButton colour ids (not PopupMenu's) -- the default scheme renders dark
+    // text on a dark bar, invisible against this app's dark theme without this.
+    menuBar_->setColour(juce::TextButton::buttonColourId, juce::Colour(0xff1c2230));
+    menuBar_->setColour(juce::TextButton::buttonOnColourId, juce::Colour(0xff2a3244));
+    menuBar_->setColour(juce::TextButton::textColourOffId, juce::Colours::white);
+    menuBar_->setColour(juce::TextButton::textColourOnId, juce::Colours::white);
+    addAndMakeVisible(*menuBar_);
 
-    inspectorTitle_.setFont(juce::Font(juce::FontOptions(18.0f)).boldened());
-    inspectorTitle_.setColour(juce::Label::textColourId, juce::Colours::white);
-    addAndMakeVisible(inspectorTitle_);
-
-    tickLabel_.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
-    addAndMakeVisible(tickLabel_);
-
-    addAndMakeVisible(transformPanel_);
-    addAndMakeVisible(scriptPanel_);
-    addAndMakeVisible(pbrMaterialPanel_);
-    addAndMakeVisible(lightPanel_);
-
-    addAndMakeVisible(materialsPanel_);
-    addAndMakeVisible(importPanel_);
-    addAndMakeVisible(logicPanel_);
-    addAndMakeVisible(serverPanel_);
-    addAndMakeVisible(settingsPanel_);
-
-    SetActiveMode(ce::WorkspaceMode::Scene);
-    SetPlaying(false);
+    dockManager_ = std::make_unique<CreationDock::DockManager>(*this);
+    addAndMakeVisible(*dockManager_);
+    initialiseDockingWorkspace();
+    // setSize() below fires resized() immediately; menuBar_/dockManager_ must
+    // already exist and be registered before that happens, or they're silently
+    // left at zero bounds (addAndMakeVisible alone doesn't trigger a layout pass).
+    resized();
 
     setSize(1400, 900);
-    startTimerHz(30);
 }
 
-MainComponent::~MainComponent() {
-    stopTimer();
-}
+MainComponent::~MainComponent() = default;
 
 void MainComponent::paint(juce::Graphics& g) {
     g.fillAll(juce::Colour(0xff15181d));
@@ -109,73 +128,83 @@ void MainComponent::resized() {
     auto bounds = getLocalBounds();
 
     headerBar_.setBounds(bounds.removeFromTop(96));
-    viewModeBar_.setBounds(bounds.removeFromTop(56));
 
-    const auto contentArea = bounds;
+    if (menuBar_ != nullptr)
+        menuBar_->setBounds(bounds.removeFromTop(28));
 
-    auto sceneArea = contentArea;
-    hierarchyPanel_.setBounds(sceneArea.removeFromLeft(220).reduced(4));
-    auto inspectorBounds = sceneArea.removeFromRight(300).reduced(12);
-    inspectorTitle_.setBounds(inspectorBounds.removeFromTop(28));
-    tickLabel_.setBounds(inspectorBounds.removeFromTop(24));
-
-    inspectorBounds.removeFromTop(12);
-    transformPanel_.setBounds(inspectorBounds.removeFromTop(ce::TransformPanel::kPreferredHeight));
-
-    inspectorBounds.removeFromTop(12);
-    scriptPanel_.setBounds(inspectorBounds.removeFromTop(ce::ScriptPanel::kPreferredHeight));
-
-    inspectorBounds.removeFromTop(12);
-    pbrMaterialPanel_.setBounds(inspectorBounds.removeFromTop(ce::MaterialsPanel::kPreferredHeight));
-
-    inspectorBounds.removeFromTop(16);
-    lightPanel_.setBounds(inspectorBounds.removeFromTop(lightPanel_.PreferredHeight()));
-
-    viewport_.setBounds(sceneArea);
-
-    materialsPanel_.setBounds(contentArea);
-    importPanel_.setBounds(contentArea);
-    logicPanel_.setBounds(contentArea);
-    serverPanel_.setBounds(contentArea);
-    settingsPanel_.setBounds(contentArea);
+    if (dockManager_ != nullptr)
+        dockManager_->setBounds(bounds);
 }
 
-void MainComponent::SetActiveMode(ce::WorkspaceMode mode) {
-    activeMode_ = mode;
-
-    const bool showScene = mode == ce::WorkspaceMode::Scene;
-    hierarchyPanel_.setVisible(showScene);
-    viewport_.setVisible(showScene);
-    inspectorTitle_.setVisible(showScene);
-    tickLabel_.setVisible(showScene);
-    transformPanel_.setVisible(showScene);
-    scriptPanel_.setVisible(showScene);
-    pbrMaterialPanel_.setVisible(showScene);
-    lightPanel_.setVisible(showScene);
-
-    materialsPanel_.setVisible(mode == ce::WorkspaceMode::Materials);
-    importPanel_.setVisible(mode == ce::WorkspaceMode::Assets);
-    logicPanel_.setVisible(mode == ce::WorkspaceMode::Logic);
-    serverPanel_.setVisible(mode == ce::WorkspaceMode::Server);
-    settingsPanel_.setVisible(mode == ce::WorkspaceMode::Settings);
+juce::StringArray MainComponent::getMenuBarNames() {
+    return { "Panels" };
 }
 
-void MainComponent::SetPlaying(bool playing) {
-    isPlaying_ = playing;
-    headerBar_.setPlaybackVisualState(isPlaying_, false);
-    headerBar_.setStatusText(isPlaying_ ? "Playing" : "Editing");
+juce::PopupMenu MainComponent::getMenuForIndex(int, const juce::String&) {
+    juce::PopupMenu menu;
+
+    const auto isOpen = [this](const juce::String& id) {
+        return dockManager_ != nullptr && dockManager_->isPanelOpen(id);
+    };
+
+    menu.addItem(menuIdPanelNavigator, "Navigator", true, isOpen(panelIdNavigator));
+    menu.addItem(menuIdPanelViewport, "Viewport", true, isOpen(panelIdViewport));
+    menu.addItem(menuIdPanelProperties, "Properties", true, isOpen(panelIdProperties));
+    menu.addItem(menuIdPanelModifiers, "Modifiers", true, isOpen(panelIdModifiers));
+    menu.addItem(menuIdPanelGeometryElements, "Geometry Elements", true, isOpen(panelIdGeometryElements));
+    menu.addItem(menuIdPanelGeometryTools, "Geometry Tools", true, isOpen(panelIdGeometryTools));
+    menu.addSeparator();
+    menu.addItem(menuIdResetLayout, "Reset Dock Layout");
+    return menu;
 }
 
-void MainComponent::timerCallback() {
-    if (isPlaying_) {
-        ce::engine::Simulation::Step(world_, 1.0f / 30.0f);
+void MainComponent::menuItemSelected(int menuItemID, int) {
+    switch (menuItemID) {
+        case menuIdPanelNavigator:        toggleDockPanel(panelIdNavigator, CreationDock::DockTargetZone::Left); break;
+        case menuIdPanelViewport:         toggleDockPanel(panelIdViewport, CreationDock::DockTargetZone::CenterTab); break;
+        case menuIdPanelProperties:       toggleDockPanel(panelIdProperties, CreationDock::DockTargetZone::Right); break;
+        case menuIdPanelModifiers:        toggleDockPanel(panelIdModifiers, CreationDock::DockTargetZone::Right); break;
+        case menuIdPanelGeometryElements: toggleDockPanel(panelIdGeometryElements, CreationDock::DockTargetZone::Bottom); break;
+        case menuIdPanelGeometryTools:    toggleDockPanel(panelIdGeometryTools, CreationDock::DockTargetZone::Bottom); break;
+        case menuIdResetLayout:           if (dockManager_ != nullptr) dockManager_->resetLayout(); break;
+        default: break;
     }
-    tickLabel_.setText("tick " + juce::String(world_.CurrentTick()), juce::dontSendNotification);
-    hierarchyPanel_.Refresh();
-    transformPanel_.Refresh();
-    scriptPanel_.Refresh();
-    pbrMaterialPanel_.Refresh();
-    logicPanel_.Refresh();
+
+    menuItemsChanged();
+}
+
+void MainComponent::initialiseDockingWorkspace() {
+    if (dockManager_ == nullptr)
+        return;
+
+    dockManager_->registerPanel(panelIdNavigator, "Navigator",
+        std::make_unique<NonOwningPanelHost>(navigatorPanel_), CreationDock::DockTargetZone::Left);
+    dockManager_->registerPanel(panelIdViewport, "Viewport",
+        std::make_unique<NonOwningPanelHost>(viewport_), CreationDock::DockTargetZone::CenterTab);
+    dockManager_->registerPanel(panelIdProperties, "Properties",
+        std::make_unique<NonOwningPanelHost>(propertiesPanel_), CreationDock::DockTargetZone::Right);
+    dockManager_->registerPanel(panelIdModifiers, "Modifiers",
+        std::make_unique<NonOwningPanelHost>(modifiersPanel_), CreationDock::DockTargetZone::Right);
+    dockManager_->registerPanel(panelIdGeometryElements, "Geometry Elements",
+        std::make_unique<NonOwningPanelHost>(geometryElementsPanel_), CreationDock::DockTargetZone::Bottom);
+    dockManager_->registerPanel(panelIdGeometryTools, "Geometry Tools",
+        std::make_unique<NonOwningPanelHost>(geometryToolsPanel_), CreationDock::DockTargetZone::Bottom);
+
+    // All six start open -- a small, cohesive panel set with no reason to hide
+    // any of them by default (unlike Engine's decision to close its less-used
+    // modes/placeholders).
+}
+
+void MainComponent::toggleDockPanel(const juce::String& panelId, CreationDock::DockTargetZone fallbackZone) {
+    if (dockManager_ == nullptr)
+        return;
+
+    if (dockManager_->isPanelOpen(panelId))
+        dockManager_->closePanel(panelId);
+    else
+        dockManager_->showPanel(panelId, fallbackZone);
+
+    menuItemsChanged();
 }
 
 void MainComponent::createNewProject()
@@ -238,15 +267,11 @@ void MainComponent::saveSessionToDisk(bool userInitiated)
         return;
     }
 
-    auto state = ce::scene::EngineSceneSerializer::serializeScene(world_);
-
-    if (auto xml = state.createXml())
-    {
-        auto xmlString = xml->toString();
-        juce::MemoryBlock xmlBlock(xmlString.toRawUTF8(), xmlString.getNumBytesAsUTF8());
-        projectSession_.writeEntry("session.xml", xmlBlock);
-    }
-
+    // EngineerSceneModel has no serialization of its own yet (no ValueTree/JSON,
+    // no undo/redo -- see the docking rollout plan's persistence-gap decision),
+    // so there's nothing scene-shaped to write here yet. This still commits the
+    // project container/manifest so the project itself is real and browsable
+    // suite-wide; scene content just doesn't round-trip across relaunches yet.
     juce::String commitError;
     if (! projectSession_.commit(commitError))
     {
@@ -260,26 +285,9 @@ void MainComponent::saveSessionToDisk(bool userInitiated)
 
 void MainComponent::loadSessionFromDisk()
 {
-    if (! projectSession_.isValid())
-        return;
-
-    juce::MemoryBlock sessionData;
-    if (projectSession_.readEntry("session.xml", sessionData))
-    {
-        auto xmlString = juce::String::createStringFromData(sessionData.getData(), (int) sessionData.getSize());
-        if (auto xml = juce::XmlDocument::parse(xmlString))
-        {
-            auto state = juce::ValueTree::fromXml(*xml);
-            if (ce::scene::EngineSceneSerializer::restoreScene(world_, state))
-            {
-                hierarchyPanel_.Refresh();
-                transformPanel_.Refresh();
-                scriptPanel_.Refresh();
-                logicPanel_.Refresh();
-                pbrMaterialPanel_.Refresh();
-            }
-        }
-    }
+    // No scene-content serialization yet (see saveSessionToDisk) -- the project
+    // container/manifest still opens normally via ProjectWorkspaceService below;
+    // sceneModel_ just starts at its own built-in demo objects every time.
 }
 
 bool MainComponent::ensureProjectSessionActive(juce::String& errorMessage)
