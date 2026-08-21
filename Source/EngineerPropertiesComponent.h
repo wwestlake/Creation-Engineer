@@ -23,6 +23,7 @@ private:
     void commitMirrorState();
     void commitDirectGeometry();
     void restorePrimitiveWorkflow();
+    void commitLibraryPartLength();
 
     EngineerSceneModel& sceneModel;
 
@@ -39,11 +40,18 @@ private:
     juce::ComboBox primitiveBox;
     juce::TextEditor posXEditor;
     juce::TextEditor posYEditor;
+    juce::TextEditor posZEditor;
     juce::TextEditor sizeXEditor;
     juce::TextEditor sizeYEditor;
+    juce::TextEditor sizeZEditor;
     juce::ToggleButton mirrorXToggle { "Mirror Across X" };
     juce::TextButton commitGeometryButton { "Commit To Geometry" };
     juce::TextButton restorePrimitiveButton { "Restore Primitive" };
+
+    juce::Label libraryPartLabel;
+    juce::TextEditor libraryLengthEditor;
+    juce::TextButton bakeButton { "Bake" };
+    juce::TextButton unbakeButton { "Un-bake" };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(EngineerPropertiesComponent)
 };

@@ -7,8 +7,8 @@ namespace
 {
 EngineerSceneModel::SceneObject makeSceneObject(const juce::String& name,
                                                 const juce::String& primitiveType,
-                                                juce::Point<float> position,
-                                                juce::Point<float> size,
+                                                juce::Vector3D<float> position,
+                                                juce::Vector3D<float> size,
                                                 bool mirrorXEnabled,
                                                 std::vector<EngineerSceneModel::ModifierEntry> modifiers,
                                                 float geometryDepth,
@@ -73,19 +73,25 @@ int geometryElementCountForKind(EngineerSceneModel::GeometryElementKind kind)
 
 EngineerSceneModel::EngineerSceneModel()
 {
+    // Real-unit (meters) demo scene, Y-up, objects resting on the y=0 grid
+    // (position.y == size.y * 0.5). Replaces the old [0,1]-normalized-plane
+    // mockup coordinates -- see the docking rollout plan's Part B.
     objects = {
-        makeSceneObject("Base Frame", "Block", { 0.36f, 0.62f }, { 0.26f, 0.18f }, false, {}, 0.0f, 0.0f, AuthoringState::primitive),
+        makeSceneObject("Base Frame", "Block", { 0.0f, 0.15f, 0.0f }, { 1.6f, 0.3f, 1.1f }, false, {}, 0.0f, 0.0f, AuthoringState::primitive),
         makeSceneObject("Drive Housing",
                         "Cylinder",
-                        { 0.56f, 0.48f },
-                        { 0.15f, 0.22f },
+                        { 1.2f, 0.35f, -0.4f },
+                        { 0.5f, 0.7f, 0.5f },
                         true,
                         { { "Mirror X", true, 1.0f } },
                         0.0f,
                         0.0f,
                         AuthoringState::modifierStack),
-        makeSceneObject("Top Plate", "Plate", { 0.49f, 0.34f }, { 0.28f, 0.10f }, false, {}, 0.07f, 0.01f, AuthoringState::directGeometry)
+        makeSceneObject("Top Plate", "Plate", { 0.6f, 0.65f, 0.3f }, { 1.7f, 0.15f, 0.7f }, false, {}, 0.07f, 0.01f, AuthoringState::directGeometry)
     };
+
+    for (auto& object : objects)
+        object.objectId = nextObjectId_++;
 }
 
 const std::vector<EngineerSceneModel::SceneObject>& EngineerSceneModel::getObjects() const noexcept
@@ -131,18 +137,18 @@ void EngineerSceneModel::setSelectedObjectPrimitiveType(const juce::String& prim
     notifyListeners();
 }
 
-void EngineerSceneModel::setSelectedObjectPosition(juce::Point<float> position)
+void EngineerSceneModel::setSelectedObjectPosition(juce::Vector3D<float> position)
 {
     auto& object = getSelectedObjectMutable();
-    object.normalizedPosition = position;
+    object.position = position;
     syncDerivedState(object);
     notifyListeners();
 }
 
-void EngineerSceneModel::setSelectedObjectSize(juce::Point<float> size)
+void EngineerSceneModel::setSelectedObjectSize(juce::Vector3D<float> size)
 {
     auto& object = getSelectedObjectMutable();
-    object.normalizedSize = size;
+    object.size = size;
     syncDerivedState(object);
     notifyListeners();
 }
@@ -194,18 +200,19 @@ void EngineerSceneModel::addPrimitiveObject(const juce::String& primitiveType)
 {
     const auto baseName = baseNameForPrimitive(primitiveType);
     const auto nextName = makeUniqueObjectName(objects, baseName);
-    const auto offset = static_cast<float>(objects.size()) * 0.04f;
+    const auto offset = static_cast<float>(objects.size()) * 0.6f;
+    constexpr float defaultHeight = 0.3f;
 
     objects.push_back(makeSceneObject(nextName,
                                       primitiveType,
-                                      { juce::jlimit(0.18f, 0.82f, 0.36f + offset),
-                                        juce::jlimit(0.18f, 0.82f, 0.38f + offset * 0.55f) },
-                                      { 0.18f, 0.14f },
+                                      { offset, defaultHeight * 0.5f, offset * 0.55f },
+                                      { 0.5f, defaultHeight, 0.5f },
                                       false,
                                       {},
                                       0.0f,
                                       0.0f,
                                       AuthoringState::primitive));
+    objects.back().objectId = nextObjectId_++;
     selectedObjectIndex = static_cast<int>(objects.size()) - 1;
     notifyListeners();
 }
@@ -214,9 +221,91 @@ void EngineerSceneModel::duplicateSelectedObject()
 {
     auto duplicate = getSelectedObject();
     duplicate.name = makeUniqueObjectName(objects, duplicate.name);
-    duplicate.normalizedPosition.x = juce::jlimit(0.14f, 0.86f, duplicate.normalizedPosition.x + 0.05f);
-    duplicate.normalizedPosition.y = juce::jlimit(0.14f, 0.86f, duplicate.normalizedPosition.y + 0.05f);
+    duplicate.position.x += 0.3f;
+    duplicate.position.z += 0.3f;
     objects.push_back(duplicate);
+    objects.back().objectId = nextObjectId_++;
+    selectedObjectIndex = static_cast<int>(objects.size()) - 1;
+    notifyListeners();
+}
+
+void EngineerSceneModel::addLibraryPartObject(const juce::String& profileId, const juce::String& materialId,
+                                              float lengthMeters, juce::Vector3D<float> initialSize)
+{
+    SceneObject object;
+    object.objectId = nextObjectId_++;
+    object.name = makeUniqueObjectName(objects, "Library Part");
+    object.primitiveType = "LibraryPart";
+    object.position = { 0.0f, initialSize.y * 0.5f, 0.0f };
+    object.size = initialSize;
+    object.authoringState = AuthoringState::primitive;
+    object.libraryPart = LibraryPartState{ profileId, materialId, lengthMeters, false };
+
+    objects.push_back(object);
+    selectedObjectIndex = static_cast<int>(objects.size()) - 1;
+    notifyListeners();
+}
+
+void EngineerSceneModel::setSelectedLibraryPartLength(float lengthMeters)
+{
+    auto& object = getSelectedObjectMutable();
+    if (!object.libraryPart.has_value() || object.libraryPart->baked)
+        return;
+
+    object.libraryPart->lengthMeters = juce::jmax(0.01f, lengthMeters);
+    object.size.y = object.libraryPart->lengthMeters;
+    notifyListeners();
+}
+
+void EngineerSceneModel::bakeSelectedLibraryPart()
+{
+    auto& object = getSelectedObjectMutable();
+    if (!object.libraryPart.has_value())
+        return;
+
+    // Baking is purely this flag flip -- EngineerViewportComponent's
+    // per-object mesh cache (keyed by objectId) stops regenerating once
+    // baked == true, since its "does the cached profile/length still match"
+    // check has nothing new to compare against. profileId/materialId/
+    // lengthMeters are never cleared, which is what makes unbaking
+    // reversible rather than a one-way conversion.
+    object.libraryPart->baked = true;
+    notifyListeners();
+}
+
+void EngineerSceneModel::unbakeSelectedLibraryPart()
+{
+    auto& object = getSelectedObjectMutable();
+    if (!object.libraryPart.has_value())
+        return;
+
+    object.libraryPart->baked = false;
+    notifyListeners();
+}
+
+bool EngineerSceneModel::isSelectedObjectLibraryPart() const noexcept
+{
+    return getSelectedObject().libraryPart.has_value();
+}
+
+bool EngineerSceneModel::isSelectedLibraryPartBaked() const noexcept
+{
+    const auto& object = getSelectedObject();
+    return object.libraryPart.has_value() && object.libraryPart->baked;
+}
+
+void EngineerSceneModel::addConnectorObject(const juce::String& connectorId, juce::Vector3D<float> size)
+{
+    SceneObject object;
+    object.objectId = nextObjectId_++;
+    object.name = makeUniqueObjectName(objects, "Connector");
+    object.primitiveType = "Connector";
+    object.position = { 0.0f, size.y * 0.5f, 0.0f };
+    object.size = size;
+    object.authoringState = AuthoringState::primitive;
+    object.connectorId = connectorId;
+
+    objects.push_back(object);
     selectedObjectIndex = static_cast<int>(objects.size()) - 1;
     notifyListeners();
 }
@@ -422,6 +511,11 @@ void EngineerSceneModel::selectNextGeometryElement() noexcept
     notifyListeners();
 }
 
+// delta stays a 2D juce::Point<float> (callers are fixed-magnitude panel
+// buttons, see EngineerGeometryToolsComponent/EngineerGeometryElementsComponent)
+// -- it always meant "footprint plane" motion, which was X/Y in the old
+// normalized-2D model and is X/Z now that position/size are real 3D. Height
+// (Y) was never touched by these calls before and still isn't.
 void EngineerSceneModel::nudgeSelectedGeometryElement(juce::Point<float> delta)
 {
     auto& object = getSelectedObjectMutable();
@@ -436,10 +530,10 @@ void EngineerSceneModel::nudgeSelectedGeometryElement(juce::Point<float> delta)
     {
         case GeometryElementKind::vertex:
         {
-            auto left = object.normalizedPosition.x - object.normalizedSize.x * 0.5f;
-            auto right = object.normalizedPosition.x + object.normalizedSize.x * 0.5f;
-            auto top = object.normalizedPosition.y - object.normalizedSize.y * 0.5f;
-            auto bottom = object.normalizedPosition.y + object.normalizedSize.y * 0.5f;
+            auto left = object.position.x - object.size.x * 0.5f;
+            auto right = object.position.x + object.size.x * 0.5f;
+            auto top = object.position.z - object.size.z * 0.5f;
+            auto bottom = object.position.z + object.size.z * 0.5f;
 
             switch (selectedGeometryElementIndex)
             {
@@ -455,8 +549,10 @@ void EngineerSceneModel::nudgeSelectedGeometryElement(juce::Point<float> delta)
             if (bottom - top < minSize)
                 bottom = top + minSize;
 
-            object.normalizedPosition = { (left + right) * 0.5f, (top + bottom) * 0.5f };
-            object.normalizedSize = { right - left, bottom - top };
+            object.position.x = (left + right) * 0.5f;
+            object.position.z = (top + bottom) * 0.5f;
+            object.size.x = right - left;
+            object.size.z = bottom - top;
             break;
         }
 
@@ -465,20 +561,20 @@ void EngineerSceneModel::nudgeSelectedGeometryElement(juce::Point<float> delta)
             switch (selectedGeometryElementIndex)
             {
                 case 0:
-                    object.normalizedPosition.y += delta.y * 0.5f;
-                    object.normalizedSize.y -= delta.y;
+                    object.position.z += delta.y * 0.5f;
+                    object.size.z -= delta.y;
                     break;
                 case 1:
-                    object.normalizedPosition.x += delta.x * 0.5f;
-                    object.normalizedSize.x += delta.x;
+                    object.position.x += delta.x * 0.5f;
+                    object.size.x += delta.x;
                     break;
                 case 2:
-                    object.normalizedPosition.y += delta.y * 0.5f;
-                    object.normalizedSize.y += delta.y;
+                    object.position.z += delta.y * 0.5f;
+                    object.size.z += delta.y;
                     break;
                 case 3:
-                    object.normalizedPosition.x += delta.x * 0.5f;
-                    object.normalizedSize.x -= delta.x;
+                    object.position.x += delta.x * 0.5f;
+                    object.size.x -= delta.x;
                     break;
                 default:
                     break;
@@ -487,7 +583,8 @@ void EngineerSceneModel::nudgeSelectedGeometryElement(juce::Point<float> delta)
         }
 
         case GeometryElementKind::face:
-            object.normalizedPosition += delta;
+            object.position.x += delta.x;
+            object.position.z += delta.y;
             break;
     }
 
@@ -501,7 +598,9 @@ void EngineerSceneModel::nudgeSelectedDirectGeometryPosition(juce::Point<float> 
     if (object.authoringState != AuthoringState::directGeometry)
         return;
 
-    object.normalizedPosition += snapDelta(delta);
+    const auto snapped = snapDelta(delta);
+    object.position.x += snapped.x;
+    object.position.z += snapped.y;
     clampDirectGeometryObject(object);
     notifyListeners();
 }
@@ -512,7 +611,9 @@ void EngineerSceneModel::scaleSelectedDirectGeometry(juce::Point<float> delta)
     if (object.authoringState != AuthoringState::directGeometry)
         return;
 
-    object.normalizedSize += snapDelta(delta);
+    const auto snapped = snapDelta(delta);
+    object.size.x += snapped.x;
+    object.size.z += snapped.y;
     clampDirectGeometryObject(object);
     notifyListeners();
 }
@@ -624,13 +725,15 @@ void EngineerSceneModel::syncDerivedState(SceneObject& object) noexcept
 
 void EngineerSceneModel::clampDirectGeometryObject(SceneObject& object) noexcept
 {
-    object.normalizedSize.x = juce::jlimit(0.05f, 0.55f, object.normalizedSize.x);
-    object.normalizedSize.y = juce::jlimit(0.05f, 0.55f, object.normalizedSize.y);
+    // Real-unit (meters) bounds, replacing the old [0,1]-normalized-canvas
+    // clamp -- a generous footprint size range and a loose position bound
+    // just to keep repeated nudges from drifting the object to infinity,
+    // not a real "workspace canvas" the way the old normalized space was.
+    object.size.x = juce::jlimit(0.05f, 5.0f, object.size.x);
+    object.size.z = juce::jlimit(0.05f, 5.0f, object.size.z);
 
-    const auto halfWidth = object.normalizedSize.x * 0.5f;
-    const auto halfHeight = object.normalizedSize.y * 0.5f;
-    object.normalizedPosition.x = juce::jlimit(0.02f + halfWidth, 0.98f - halfWidth, object.normalizedPosition.x);
-    object.normalizedPosition.y = juce::jlimit(0.02f + halfHeight, 0.98f - halfHeight, object.normalizedPosition.y);
+    object.position.x = juce::jlimit(-25.0f, 25.0f, object.position.x);
+    object.position.z = juce::jlimit(-25.0f, 25.0f, object.position.z);
 }
 
 juce::Point<float> EngineerSceneModel::snapDelta(juce::Point<float> delta) const noexcept

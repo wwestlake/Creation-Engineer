@@ -112,9 +112,11 @@ void EngineerNavigatorComponent::paintListBoxItem(int rowNumber,
                    + "  |  "
                    + EngineerSceneModel::toDisplayString(object.authoringState)
                    + "  |  Pos "
-                   + juce::String(object.normalizedPosition.x, 2)
+                   + juce::String(object.position.x, 2)
                    + ", "
-                   + juce::String(object.normalizedPosition.y, 2),
+                   + juce::String(object.position.y, 2)
+                   + ", "
+                   + juce::String(object.position.z, 2),
                bounds,
                juce::Justification::centredLeft,
                true);

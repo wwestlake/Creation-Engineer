@@ -2,146 +2,120 @@
 
 #include <JuceHeader.h>
 #include <array>
-#include <atomic>
 #include <memory>
-#include <vector>
+#include <unordered_map>
 
+#include "creation/engineering/SpecLibrary.h"
+
+#include "EngineerOrthoCameraController.h"
 #include "EngineerSceneModel.h"
+#include "Render/Scene/Camera.h"
+#include "Render/Scene/FreeCamera.h"
+#include "Render/Scene/GridRenderer.h"
+#include "Render/Scene/Mesh.h"
+#include "Render/Shaders/ShaderComposer.h"
 
+// One real 3D/2D OpenGL design surface. Three independently-dockable
+// instances of this class (one per ViewMode) make up CreationEngineer's
+// workstation spine — see the docking rollout plan's Part C. Each instance
+// owns its own OpenGLContext/camera/uploaded geometry and only shares the
+// EngineerSceneModel with its siblings, so any of the three can be dragged
+// into its own floating window via CreationDock for free.
+//
+// Replaces the old hand-rolled fake-2D viewport entirely: no gizmo, no
+// InteractionOverlay, no setComponentPaintingEnabled(true) — paint() is a
+// genuine no-op and the scene is real GL geometry driven by
+// EngineerSceneModel's real juce::Vector3D<float> positions/sizes.
 class EngineerViewportComponent final : public juce::Component,
                                         private juce::OpenGLRenderer,
                                         private EngineerSceneModel::Listener
 {
 public:
+    // Fixed for the lifetime of the instance -- there is no runtime mode
+    // switch; each mode is its own dockable panel instead.
     enum class ViewMode
     {
         design3D,
         assemblyFloor,
-        planarLayer
+        planarElectronics
     };
 
-    enum class GizmoDragMode
-    {
-        none,
-        planar,
-        axisX,
-        axisY,
-        axisZ
-    };
-
-    explicit EngineerViewportComponent(EngineerSceneModel& sceneModel);
+    EngineerViewportComponent(EngineerSceneModel& sceneModel, ViewMode mode,
+                              const creation::engineering::SpecLibrary& specLibrary);
     ~EngineerViewportComponent() override;
 
-    void paint(juce::Graphics& g) override;
-    void resized() override;
+    void paint(juce::Graphics&) override {}
+    void resized() override {}
     void mouseDown(const juce::MouseEvent& event) override;
-    void mouseDrag(const juce::MouseEvent& event) override;
-    void mouseUp(const juce::MouseEvent& event) override;
     void mouseWheelMove(const juce::MouseEvent& event, const juce::MouseWheelDetails& wheel) override;
 
-    ViewMode getViewMode() const noexcept;
+    ViewMode getViewMode() const noexcept { return viewMode_; }
 
 private:
-    class InteractionOverlay;
-
-    struct ProjectedObjectBounds
-    {
-        int index = -1;
-        juce::Rectangle<float> screenBounds;
-        juce::Point<float> screenCentre;
-    };
-
-    struct GizmoProjection
-    {
-        juce::Point<float> centre;
-        juce::Point<float> axisX;
-        juce::Point<float> axisY;
-        juce::Point<float> axisZ;
-    };
-
-    struct MeshBuffer
-    {
-        GLuint vao = 0;
-        GLuint vbo = 0;
-        GLsizei vertexCount = 0;
-        unsigned int primitiveType = 0;
-    };
-
-    struct ShaderHandles
-    {
-        std::unique_ptr<juce::OpenGLShaderProgram> program;
-        std::unique_ptr<juce::OpenGLShaderProgram::Attribute> position;
-        std::unique_ptr<juce::OpenGLShaderProgram::Attribute> normal;
-        std::unique_ptr<juce::OpenGLShaderProgram::Uniform> mvp;
-        std::unique_ptr<juce::OpenGLShaderProgram::Uniform> model;
-        std::unique_ptr<juce::OpenGLShaderProgram::Uniform> baseColour;
-        std::unique_ptr<juce::OpenGLShaderProgram::Uniform> lightingMix;
-        std::unique_ptr<juce::OpenGLShaderProgram::Uniform> lightDirection;
-    };
-
     void engineerSceneModelChanged() override;
 
     void newOpenGLContextCreated() override;
     void renderOpenGL() override;
     void openGLContextClosing() override;
 
-    void showContextMenu(const juce::MouseEvent& event);
-    void handleContextMenuResult(int result, int clickedIndex);
-    void applyCameraPreset(EngineerSceneModel::CameraPreset preset);
-    void initialiseSceneBuffers();
-    void releaseSceneBuffers();
-    void buildMeshBuffer(MeshBuffer& mesh,
-                         const std::vector<float>& vertices,
-                         GLenum primitiveType);
-    void renderScene();
-    void renderGrid() const;
-    void renderReferenceScene() const;
-    void renderObject(const EngineerSceneModel::SceneObject& object,
-                      bool selected,
-                      bool mirrored) const;
-    void updateFlyCamera(float deltaSeconds);
-    juce::Vector3D<float> flyCameraForward() const;
-    juce::Vector3D<float> flyCameraFlatForward() const;
-    void paintOverlay(juce::Graphics& g) const;
-    void drawOverlayGizmo(juce::Graphics& g) const;
+    void renderObject(const EngineerSceneModel::SceneObject& object, bool selected, bool mirrored,
+                      const juce::Matrix3D<float>& view, const juce::Matrix3D<float>& projection) const;
+    void renderLibraryPartObject(const EngineerSceneModel::SceneObject& object, bool selected,
+                                 const juce::Matrix3D<float>& view, const juce::Matrix3D<float>& projection);
+    void renderConnectorObject(const EngineerSceneModel::SceneObject& object, bool selected,
+                               const juce::Matrix3D<float>& view, const juce::Matrix3D<float>& projection);
     int hitTestObject(juce::Point<float> point) const;
-    GizmoDragMode hitTestGizmo(juce::Point<float> point) const;
-    GizmoProjection buildSelectedGizmoProjection() const;
-    std::vector<ProjectedObjectBounds> buildProjectedObjectBounds() const;
-    juce::Vector3D<float> getCameraPosition() const noexcept;
-    void updateViewMatrices();
 
-    ViewMode viewMode = ViewMode::design3D;
-    EngineerSceneModel& sceneModel;
-    juce::OpenGLContext openGLContext;
-    std::unique_ptr<InteractionOverlay> interactionOverlay;
-    ShaderHandles shader;
-    MeshBuffer boxMesh;
-    MeshBuffer cylinderMesh;
-    MeshBuffer gridMesh;
-    MeshBuffer axisMesh;
+    ViewMode viewMode_;
+    EngineerSceneModel& sceneModel_;
+    const creation::engineering::SpecLibrary& specLibrary_;
 
-    juce::Point<float> dragAnchor;
-    juce::Point<float> mouseDownPoint;
-    juce::Point<float> lastLookScreenPos;
-    bool isNavigatingView = false;
-    bool isDraggingGizmo = false;
-    std::atomic<bool> isLooking { false };
-    bool lookDragMoved = false;
-    bool pendingBackgroundNavigation = false;
-    bool popupMenuTriggered = false;
-    GizmoDragMode gizmoDragMode = GizmoDragMode::none;
-    juce::Vector3D<float> orbitTarget { 0.0f, 0.0f, 0.0f };
-    juce::Vector3D<float> flyCameraPosition { 0.0f, 1.6f, 5.0f };
-    float orbitDistance = 18.0f;
-    std::atomic<float> yawRadians { 0.72f };
-    std::atomic<float> pitchRadians { -0.48f };
-    bool useOrthographicProjection = false;
-    std::atomic<float> flySpeedMultiplier { 1.0f };
-    double lastFrameTimeSeconds = 0.0;
+    juce::OpenGLContext openGLContext_;
+    std::unique_ptr<ce::ShaderComposer> shaderComposer_;
+    juce::OpenGLShaderProgram* litProgram_ = nullptr;
+    juce::OpenGLShaderProgram* gridProgram_ = nullptr;
 
-    std::array<float, 16> projectionMatrix {};
-    std::array<float, 16> viewMatrix {};
+    ce::Camera camera_;
+    std::unique_ptr<ce::FreeCamera> freeCamera_;                 // design3D / assemblyFloor only.
+    std::unique_ptr<EngineerOrthoCameraController> orthoCamera_; // planarElectronics only.
+    ce::GridRenderer gridRenderer_;
+    ce::Mesh boxMesh_;
+    ce::Mesh cylinderMesh_;
+
+    // Keyed by SceneObject::objectId (stable across vector reindexing) so a
+    // cached mesh survives unrelated add/remove/duplicate elsewhere in the
+    // scene. Regenerated lazily only when the cached signature no longer
+    // matches the object's current params -- see renderLibraryPartObject.
+    struct LibraryPartMeshCache
+    {
+        ce::Mesh mesh;
+        juce::String profileId;
+        float lengthMeters = -1.0f;
+    };
+    std::unordered_map<int, LibraryPartMeshCache> libraryPartMeshes_;
+
+    // Connectors have no live parameter to watch (v1 scope, see the
+    // parametric-part-libraries plan's Part H) so this only ever needs to
+    // build a connector's mesh once per objectId.
+    struct ConnectorMeshCache
+    {
+        ce::Mesh mesh;
+        juce::String connectorId;
+    };
+    std::unordered_map<int, ConnectorMeshCache> connectorMeshes_;
+
+    double lastFrameTimeSeconds_ = 0.0;
+
+    // Snapshot of the combined inverse(view*projection) matrix (column-
+    // major, same layout as juce::Matrix3D::mat -- juce::Matrix3D itself has
+    // no general 4x4 inverse, so this is computed by hand, see
+    // invertMatrix4 in the .cpp), refreshed once per rendered frame under
+    // stateLock_ and read from hitTestObject on the message thread
+    // (mouseDown) -- same producer/consumer-across-threads pattern
+    // CreationEngine's ViewportComponent uses for its own camera-position
+    // snapshot (see that class's stateLock_ doc).
+    mutable juce::CriticalSection stateLock_;
+    std::array<float, 16> lastInverseViewProjection_ {};
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(EngineerViewportComponent)
 };

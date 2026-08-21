@@ -25,19 +25,25 @@ private:
 };
 
 const juce::String panelIdNavigator = "navigator";
-const juce::String panelIdViewport = "viewport";
+const juce::String panelIdViewportDesign3D = "viewportDesign3D";
+const juce::String panelIdViewportAssemblyFloor = "viewportAssemblyFloor";
+const juce::String panelIdViewportPlanarElectronics = "viewportPlanarElectronics";
 const juce::String panelIdProperties = "properties";
 const juce::String panelIdModifiers = "modifiers";
 const juce::String panelIdGeometryElements = "geometryElements";
 const juce::String panelIdGeometryTools = "geometryTools";
+const juce::String panelIdLibrary = "library";
 
 constexpr int menuIdPanelNavigator = 3001;
-constexpr int menuIdPanelViewport = 3002;
+constexpr int menuIdPanelViewportDesign3D = 3002;
 constexpr int menuIdPanelProperties = 3003;
 constexpr int menuIdPanelModifiers = 3004;
 constexpr int menuIdPanelGeometryElements = 3005;
 constexpr int menuIdPanelGeometryTools = 3006;
 constexpr int menuIdResetLayout = 3007;
+constexpr int menuIdPanelViewportAssemblyFloor = 3008;
+constexpr int menuIdPanelViewportPlanarElectronics = 3009;
+constexpr int menuIdPanelLibrary = 3010;
 }
 
 MainComponent::MainComponent()
@@ -46,9 +52,29 @@ MainComponent::MainComponent()
       modifiersPanel_(sceneModel_),
       geometryElementsPanel_(sceneModel_),
       geometryToolsPanel_(sceneModel_),
-      viewport_(sceneModel_) {
+      libraryPanel_(sceneModel_, combinedSpecLibrary_, userSpecLibrary_, [this] { onUserSpecLibraryChanged(); }),
+      viewportDesign3D_(sceneModel_, EngineerViewportComponent::ViewMode::design3D, combinedSpecLibrary_),
+      viewportAssemblyFloor_(sceneModel_, EngineerViewportComponent::ViewMode::assemblyFloor, combinedSpecLibrary_),
+      viewportPlanarElectronics_(sceneModel_, EngineerViewportComponent::ViewMode::planarElectronics, combinedSpecLibrary_) {
     juce::String suiteErr;
     suiteSettings_ = suiteSettingsStore_.load(suiteErr);
+
+    // Builtin (generic, shipped) + user-authored (persisted separately) part
+    // library, combined into combinedSpecLibrary_ before any viewport or the
+    // library panel ever reads from it -- see the parametric-part-libraries
+    // plan's Part B/F. A missing/empty user library file is not an error,
+    // same convention engineer-settings.json already uses.
+    juce::String builtinSpecError;
+    creation::engineering::loadBuiltinSpecLibrary(juce::File(ENGINEERING_SPECS_DATA_DIR), builtinSpecLibrary_,
+                                                  builtinSpecError);
+
+    juce::String userLibraryLoadError;
+    creation::engineering::fromVar(
+        creation::services::SuiteVfsJsonStore::loadJson("engineering-user-library.json", userLibraryLoadError),
+        userSpecLibrary_);
+
+    combinedSpecLibrary_ = builtinSpecLibrary_;
+    combinedSpecLibrary_.merge(userSpecLibrary_);
 
     headerBar_.setAppTitle("Creation Engineer");
     headerBar_.setLogoImage(creation::ui::getSuiteLogoImage(creation::ui::SuiteLogoId::engineer));
@@ -148,11 +174,14 @@ juce::PopupMenu MainComponent::getMenuForIndex(int, const juce::String&) {
     };
 
     menu.addItem(menuIdPanelNavigator, "Navigator", true, isOpen(panelIdNavigator));
-    menu.addItem(menuIdPanelViewport, "Viewport", true, isOpen(panelIdViewport));
+    menu.addItem(menuIdPanelViewportDesign3D, "3D Design", true, isOpen(panelIdViewportDesign3D));
+    menu.addItem(menuIdPanelViewportAssemblyFloor, "Assembly Floor", true, isOpen(panelIdViewportAssemblyFloor));
+    menu.addItem(menuIdPanelViewportPlanarElectronics, "Planar/Electronics", true, isOpen(panelIdViewportPlanarElectronics));
     menu.addItem(menuIdPanelProperties, "Properties", true, isOpen(panelIdProperties));
     menu.addItem(menuIdPanelModifiers, "Modifiers", true, isOpen(panelIdModifiers));
     menu.addItem(menuIdPanelGeometryElements, "Geometry Elements", true, isOpen(panelIdGeometryElements));
     menu.addItem(menuIdPanelGeometryTools, "Geometry Tools", true, isOpen(panelIdGeometryTools));
+    menu.addItem(menuIdPanelLibrary, "Part Library", true, isOpen(panelIdLibrary));
     menu.addSeparator();
     menu.addItem(menuIdResetLayout, "Reset Dock Layout");
     return menu;
@@ -161,11 +190,14 @@ juce::PopupMenu MainComponent::getMenuForIndex(int, const juce::String&) {
 void MainComponent::menuItemSelected(int menuItemID, int) {
     switch (menuItemID) {
         case menuIdPanelNavigator:        toggleDockPanel(panelIdNavigator, CreationDock::DockTargetZone::Left); break;
-        case menuIdPanelViewport:         toggleDockPanel(panelIdViewport, CreationDock::DockTargetZone::CenterTab); break;
+        case menuIdPanelViewportDesign3D: toggleDockPanel(panelIdViewportDesign3D, CreationDock::DockTargetZone::CenterTab); break;
+        case menuIdPanelViewportAssemblyFloor: toggleDockPanel(panelIdViewportAssemblyFloor, CreationDock::DockTargetZone::CenterTab); break;
+        case menuIdPanelViewportPlanarElectronics: toggleDockPanel(panelIdViewportPlanarElectronics, CreationDock::DockTargetZone::CenterTab); break;
         case menuIdPanelProperties:       toggleDockPanel(panelIdProperties, CreationDock::DockTargetZone::Right); break;
         case menuIdPanelModifiers:        toggleDockPanel(panelIdModifiers, CreationDock::DockTargetZone::Right); break;
         case menuIdPanelGeometryElements: toggleDockPanel(panelIdGeometryElements, CreationDock::DockTargetZone::Bottom); break;
         case menuIdPanelGeometryTools:    toggleDockPanel(panelIdGeometryTools, CreationDock::DockTargetZone::Bottom); break;
+        case menuIdPanelLibrary:          toggleDockPanel(panelIdLibrary, CreationDock::DockTargetZone::Left); break;
         case menuIdResetLayout:           if (dockManager_ != nullptr) dockManager_->resetLayout(); break;
         default: break;
     }
@@ -179,8 +211,12 @@ void MainComponent::initialiseDockingWorkspace() {
 
     dockManager_->registerPanel(panelIdNavigator, "Navigator",
         std::make_unique<NonOwningPanelHost>(navigatorPanel_), CreationDock::DockTargetZone::Left);
-    dockManager_->registerPanel(panelIdViewport, "Viewport",
-        std::make_unique<NonOwningPanelHost>(viewport_), CreationDock::DockTargetZone::CenterTab);
+    dockManager_->registerPanel(panelIdViewportDesign3D, "3D Design",
+        std::make_unique<NonOwningPanelHost>(viewportDesign3D_), CreationDock::DockTargetZone::CenterTab);
+    dockManager_->registerPanel(panelIdViewportAssemblyFloor, "Assembly Floor",
+        std::make_unique<NonOwningPanelHost>(viewportAssemblyFloor_), CreationDock::DockTargetZone::CenterTab);
+    dockManager_->registerPanel(panelIdViewportPlanarElectronics, "Planar/Electronics",
+        std::make_unique<NonOwningPanelHost>(viewportPlanarElectronics_), CreationDock::DockTargetZone::CenterTab);
     dockManager_->registerPanel(panelIdProperties, "Properties",
         std::make_unique<NonOwningPanelHost>(propertiesPanel_), CreationDock::DockTargetZone::Right);
     dockManager_->registerPanel(panelIdModifiers, "Modifiers",
@@ -189,10 +225,14 @@ void MainComponent::initialiseDockingWorkspace() {
         std::make_unique<NonOwningPanelHost>(geometryElementsPanel_), CreationDock::DockTargetZone::Bottom);
     dockManager_->registerPanel(panelIdGeometryTools, "Geometry Tools",
         std::make_unique<NonOwningPanelHost>(geometryToolsPanel_), CreationDock::DockTargetZone::Bottom);
+    dockManager_->registerPanel(panelIdLibrary, "Part Library",
+        std::make_unique<NonOwningPanelHost>(libraryPanel_), CreationDock::DockTargetZone::Left);
 
-    // All six start open -- a small, cohesive panel set with no reason to hide
-    // any of them by default (unlike Engine's decision to close its less-used
-    // modes/placeholders).
+    // All nine start open -- a small, cohesive panel set with no reason to
+    // hide any of them by default (unlike Engine's decision to close its
+    // less-used modes/placeholders). All three viewports share the centre
+    // tab group, same as the single viewport used to occupy -- dragging any
+    // tab out into its own window is free via CreationDock::FloatingDockWindow.
 }
 
 void MainComponent::toggleDockPanel(const juce::String& panelId, CreationDock::DockTargetZone fallbackZone) {
@@ -340,4 +380,14 @@ void MainComponent::saveAppSettings()
 
 void MainComponent::loadAppSettings()
 {
+}
+
+void MainComponent::onUserSpecLibraryChanged()
+{
+    juce::String saveError;
+    creation::services::SuiteVfsJsonStore::saveJson("engineering-user-library.json",
+                                                     creation::engineering::toVar(userSpecLibrary_), saveError);
+
+    combinedSpecLibrary_ = builtinSpecLibrary_;
+    combinedSpecLibrary_.merge(userSpecLibrary_);
 }

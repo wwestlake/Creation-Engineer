@@ -24,6 +24,12 @@ add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../../shared/UI" CreationSuiteShar
 if(NOT TARGET CreationDock)
     add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../../shared/JuceDocking" CreationSuiteSharedDocking)
 endif()
+if(NOT TARGET creation_suite_render)
+    add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../../shared/Render" CreationSuiteSharedRender)
+endif()
+if(NOT TARGET creation_suite_engineering_specs)
+    add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../../shared/EngineeringSpecs" CreationSuiteSharedEngineeringSpecs)
+endif()
 
 juce_add_gui_app(CreationEngineerApp
     PRODUCT_NAME "Creation Engineer"
@@ -46,6 +52,8 @@ target_sources(CreationEngineerApp PRIVATE
     Source/EngineerSceneModel.h
     Source/EngineerViewportComponent.cpp
     Source/EngineerViewportComponent.h
+    Source/EngineerOrthoCameraController.cpp
+    Source/EngineerOrthoCameraController.h
     Source/EngineerNavigatorComponent.cpp
     Source/EngineerNavigatorComponent.h
     Source/EngineerPropertiesComponent.cpp
@@ -56,6 +64,8 @@ target_sources(CreationEngineerApp PRIVATE
     Source/EngineerGeometryElementsComponent.h
     Source/EngineerGeometryToolsComponent.cpp
     Source/EngineerGeometryToolsComponent.h
+    Source/EngineerLibraryComponent.cpp
+    Source/EngineerLibraryComponent.h
 )
 
 target_include_directories(CreationEngineerApp PRIVATE
@@ -69,6 +79,8 @@ target_compile_definitions(CreationEngineerApp PRIVATE
     JUCE_OPENGL3=1
     JUCE_APPLICATION_NAME_STRING="$<TARGET_PROPERTY:CreationEngineerApp,JUCE_PRODUCT_NAME>"
     JUCE_APPLICATION_VERSION_STRING="$<TARGET_PROPERTY:CreationEngineerApp,JUCE_VERSION>"
+    ENGINEER_SHADER_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../../shared/Render/Shaders"
+    ENGINEERING_SPECS_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../../shared/EngineeringSpecs/data"
 )
 
 target_link_libraries(CreationEngineerApp PRIVATE
@@ -76,6 +88,8 @@ target_link_libraries(CreationEngineerApp PRIVATE
     creation_suite_services
     creation_suite_ui
     creation_suite_ui_assets
+    creation_suite_render
+    creation_suite_engineering_specs
     CreationDock
     juce::juce_gui_extra
     juce::juce_opengl
