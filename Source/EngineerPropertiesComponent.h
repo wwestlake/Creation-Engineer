@@ -24,6 +24,7 @@ private:
     void commitDirectGeometry();
     void restorePrimitiveWorkflow();
     void commitLibraryPartLength();
+    void commitLayerSelection();
 
     EngineerSceneModel& sceneModel;
 
@@ -36,6 +37,8 @@ private:
     juce::Label authoringStateLabel;
     juce::Label authoringStateValue;
     juce::Label modifierLabel;
+    juce::Label layerLabel;
+    juce::ComboBox layerBox;
     juce::TextEditor nameEditor;
     juce::ComboBox primitiveBox;
     juce::TextEditor posXEditor;

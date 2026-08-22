@@ -1,5 +1,7 @@
 #include "EngineerPropertiesComponent.h"
 
+#include "EngineerUnits.h"
+
 namespace
 {
 void configureCaption(juce::Label& label, const juce::String& text)
@@ -36,6 +38,7 @@ EngineerPropertiesComponent::EngineerPropertiesComponent(EngineerSceneModel& mod
     configureCaption(sizeLabel, "Size (m)");
     configureCaption(authoringStateLabel, "Authoring State");
     configureCaption(modifierLabel, "Modifier Stack");
+    configureCaption(layerLabel, "Layer");
 
     authoringStateValue.setColour(juce::Label::textColourId, juce::Colours::white);
     authoringStateValue.setFont(juce::Font(15.0f).boldened());
@@ -47,6 +50,9 @@ EngineerPropertiesComponent::EngineerPropertiesComponent(EngineerSceneModel& mod
     addAndMakeVisible(authoringStateLabel);
     addAndMakeVisible(authoringStateValue);
     addAndMakeVisible(modifierLabel);
+    addAndMakeVisible(layerLabel);
+    addAndMakeVisible(layerBox);
+    layerBox.onChange = [this] { commitLayerSelection(); };
 
     configureEditor(nameEditor);
     configureEditor(posXEditor);
@@ -161,6 +167,10 @@ void EngineerPropertiesComponent::resized()
     mirrorXToggle.setBounds(area.removeFromTop(24));
     area.removeFromTop(12);
 
+    layerLabel.setBounds(area.removeFromTop(18));
+    layerBox.setBounds(area.removeFromTop(26));
+    area.removeFromTop(12);
+
     commitGeometryButton.setBounds(area.removeFromTop(28));
     area.removeFromTop(8);
     restorePrimitiveButton.setBounds(area.removeFromTop(28));
@@ -186,17 +196,29 @@ void EngineerPropertiesComponent::refreshFromScene()
     const auto& object = sceneModel.getSelectedObject();
     nameEditor.setText(object.name, juce::dontSendNotification);
     primitiveBox.setText(object.primitiveType, juce::dontSendNotification);
-    posXEditor.setText(juce::String(object.position.x, 3), juce::dontSendNotification);
-    posYEditor.setText(juce::String(object.position.y, 3), juce::dontSendNotification);
-    posZEditor.setText(juce::String(object.position.z, 3), juce::dontSendNotification);
-    sizeXEditor.setText(juce::String(object.size.x, 3), juce::dontSendNotification);
-    sizeYEditor.setText(juce::String(object.size.y, 3), juce::dontSendNotification);
-    sizeZEditor.setText(juce::String(object.size.z, 3), juce::dontSendNotification);
+    posXEditor.setText(EngineerUnits::formatLengthMeters(object.position.x), juce::dontSendNotification);
+    posYEditor.setText(EngineerUnits::formatLengthMeters(object.position.y), juce::dontSendNotification);
+    posZEditor.setText(EngineerUnits::formatLengthMeters(object.position.z), juce::dontSendNotification);
+    sizeXEditor.setText(EngineerUnits::formatLengthMeters(object.size.x), juce::dontSendNotification);
+    sizeYEditor.setText(EngineerUnits::formatLengthMeters(object.size.y), juce::dontSendNotification);
+    sizeZEditor.setText(EngineerUnits::formatLengthMeters(object.size.z), juce::dontSendNotification);
     authoringStateValue.setText(EngineerSceneModel::toDisplayString(object.authoringState), juce::dontSendNotification);
     mirrorXToggle.setToggleState(object.mirrorXEnabled, juce::dontSendNotification);
     mirrorXToggle.setEnabled(object.authoringState != EngineerSceneModel::AuthoringState::directGeometry);
     commitGeometryButton.setEnabled(object.authoringState != EngineerSceneModel::AuthoringState::directGeometry);
     restorePrimitiveButton.setEnabled(object.authoringState != EngineerSceneModel::AuthoringState::primitive);
+
+    layerBox.clear(juce::dontSendNotification);
+    const auto& layers = sceneModel.getLayers();
+    int selectedLayerItemId = 1;
+    for (int i = 0; i < static_cast<int>(layers.size()); ++i)
+    {
+        const auto& layer = layers[static_cast<size_t>(i)];
+        layerBox.addItem(layer.name, i + 1);
+        if (layer.id == object.layerId)
+            selectedLayerItemId = i + 1;
+    }
+    layerBox.setSelectedId(selectedLayerItemId, juce::dontSendNotification);
 
     const auto isLibraryPart = sceneModel.isSelectedObjectLibraryPart();
     libraryPartLabel.setVisible(isLibraryPart);
@@ -207,7 +229,7 @@ void EngineerPropertiesComponent::refreshFromScene()
     if (isLibraryPart)
     {
         const auto baked = sceneModel.isSelectedLibraryPartBaked();
-        libraryLengthEditor.setText(juce::String(object.libraryPart->lengthMeters, 3), juce::dontSendNotification);
+        libraryLengthEditor.setText(EngineerUnits::formatLengthMeters(object.libraryPart->lengthMeters), juce::dontSendNotification);
         libraryLengthEditor.setEnabled(!baked);
         bakeButton.setEnabled(!baked);
         unbakeButton.setEnabled(baked);
@@ -226,16 +248,18 @@ void EngineerPropertiesComponent::commitPrimitiveType()
 
 void EngineerPropertiesComponent::commitPosition()
 {
-    sceneModel.setSelectedObjectPosition({ posXEditor.getText().getFloatValue(),
-                                           posYEditor.getText().getFloatValue(),
-                                           posZEditor.getText().getFloatValue() });
+    const auto& current = sceneModel.getSelectedObject().position;
+    sceneModel.setSelectedObjectPosition({ EngineerUnits::parseLengthMeters(posXEditor.getText(), current.x),
+                                           EngineerUnits::parseLengthMeters(posYEditor.getText(), current.y),
+                                           EngineerUnits::parseLengthMeters(posZEditor.getText(), current.z) });
 }
 
 void EngineerPropertiesComponent::commitSize()
 {
-    sceneModel.setSelectedObjectSize({ juce::jmax(0.05f, sizeXEditor.getText().getFloatValue()),
-                                       juce::jmax(0.05f, sizeYEditor.getText().getFloatValue()),
-                                       juce::jmax(0.05f, sizeZEditor.getText().getFloatValue()) });
+    const auto& current = sceneModel.getSelectedObject().size;
+    sceneModel.setSelectedObjectSize({ juce::jmax(0.05f, EngineerUnits::parseLengthMeters(sizeXEditor.getText(), current.x)),
+                                       juce::jmax(0.05f, EngineerUnits::parseLengthMeters(sizeYEditor.getText(), current.y)),
+                                       juce::jmax(0.05f, EngineerUnits::parseLengthMeters(sizeZEditor.getText(), current.z)) });
 }
 
 void EngineerPropertiesComponent::commitMirrorState()
@@ -253,7 +277,20 @@ void EngineerPropertiesComponent::restorePrimitiveWorkflow()
     sceneModel.restoreSelectedObjectPrimitiveWorkflow();
 }
 
+void EngineerPropertiesComponent::commitLayerSelection()
+{
+    const auto itemIndex = layerBox.getSelectedItemIndex();
+    const auto& layers = sceneModel.getLayers();
+    if (itemIndex < 0 || itemIndex >= static_cast<int>(layers.size()))
+        return;
+
+    sceneModel.moveObjectToLayer(sceneModel.getSelectedObjectIndex(), layers[static_cast<size_t>(itemIndex)].id);
+}
+
 void EngineerPropertiesComponent::commitLibraryPartLength()
 {
-    sceneModel.setSelectedLibraryPartLength(libraryLengthEditor.getText().getFloatValue());
+    const auto current = sceneModel.isSelectedObjectLibraryPart()
+                            ? sceneModel.getSelectedObject().libraryPart->lengthMeters
+                            : 0.1f;
+    sceneModel.setSelectedLibraryPartLength(EngineerUnits::parseLengthMeters(libraryLengthEditor.getText(), current));
 }

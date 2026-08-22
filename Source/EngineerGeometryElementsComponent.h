@@ -3,6 +3,11 @@
 #include <JuceHeader.h>
 #include "EngineerSceneModel.h"
 
+// Object Mode / Vertex Edit Mode toggle (see EngineerSceneModel::EditMode)
+// plus, in Vertex mode, navigation and a real-unit position readout/editor
+// for the selected object's currently-selected vertex. Replaces the old
+// fake GeometryElementKind vertex/edge/face proxy system entirely -- see
+// the drawing/layers/vertex-editing plan's Part K.
 class EngineerGeometryElementsComponent final : public juce::Component,
                                                 private EngineerSceneModel::Listener
 {
@@ -16,27 +21,25 @@ public:
 private:
     void engineerSceneModelChanged() override;
     void refreshFromScene();
-    void selectKind(EngineerSceneModel::GeometryElementKind kind);
-    void previousElement();
-    void nextElement();
-    void nudgeLeft();
-    void nudgeRight();
-    void nudgeUp();
-    void nudgeDown();
+    void setObjectMode();
+    void setVertexMode();
+    void previousVertex();
+    void nextVertex();
+    void commitVertexPosition();
 
     EngineerSceneModel& sceneModel;
     juce::Label titleLabel;
     juce::Label detailLabel;
     juce::Label selectionLabel;
-    juce::TextButton vertexButton { "Vertex" };
-    juce::TextButton edgeButton { "Edge" };
-    juce::TextButton faceButton { "Face" };
+    juce::TextButton objectModeButton { "Object" };
+    juce::TextButton vertexModeButton { "Vertex" };
     juce::TextButton previousButton { "Previous" };
     juce::TextButton nextButton { "Next" };
-    juce::TextButton leftButton { "Left" };
-    juce::TextButton rightButton { "Right" };
-    juce::TextButton upButton { "Up" };
-    juce::TextButton downButton { "Down" };
+
+    juce::Label vertexPositionLabel;
+    juce::TextEditor vertexXEditor;
+    juce::TextEditor vertexYEditor;
+    juce::TextEditor vertexZEditor;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(EngineerGeometryElementsComponent)
 };

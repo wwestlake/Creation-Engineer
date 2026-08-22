@@ -1,5 +1,7 @@
 #include "EngineerLibraryComponent.h"
 
+#include "EngineerUnits.h"
+
 namespace
 {
 void configureCaption(juce::Label& label, const juce::String& text)
@@ -278,7 +280,7 @@ void EngineerLibraryComponent::placeSelectedProfile()
 
     const auto& profile = browseLibrary_.profiles[static_cast<size_t>(selectedProfileIndex_)];
     const auto& material = browseLibrary_.materials[static_cast<size_t>(materialIndex)];
-    const auto lengthMeters = juce::jmax(0.01f, lengthEditor_.getText().getFloatValue());
+    const auto lengthMeters = juce::jmax(0.01f, EngineerUnits::parseLengthMeters(lengthEditor_.getText(), 0.5f));
 
     const juce::Vector3D<float> initialSize { profile.outerWidthMm / 1000.0f, lengthMeters,
                                               profile.outerHeightMm / 1000.0f };

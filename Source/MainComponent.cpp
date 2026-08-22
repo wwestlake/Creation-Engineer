@@ -3,6 +3,8 @@
 #include <creation/services/SuiteVfsJsonStore.h>
 #include <creation/ui/CreationSuiteLogos.h>
 
+#include "EngineerSceneSerialization.h"
+
 namespace
 {
 // Wraps an existing component (not owned) as a dock panel's content, filling
@@ -33,6 +35,7 @@ const juce::String panelIdModifiers = "modifiers";
 const juce::String panelIdGeometryElements = "geometryElements";
 const juce::String panelIdGeometryTools = "geometryTools";
 const juce::String panelIdLibrary = "library";
+const juce::String panelIdLayers = "layers";
 
 constexpr int menuIdPanelNavigator = 3001;
 constexpr int menuIdPanelViewportDesign3D = 3002;
@@ -44,6 +47,10 @@ constexpr int menuIdResetLayout = 3007;
 constexpr int menuIdPanelViewportAssemblyFloor = 3008;
 constexpr int menuIdPanelViewportPlanarElectronics = 3009;
 constexpr int menuIdPanelLibrary = 3010;
+constexpr int menuIdPanelLayers = 3011;
+constexpr int menuIdSaveDrawing = 3012;
+
+constexpr const char* kEngineerDrawingEntryPath = "Project/engineer-drawing.json";
 }
 
 MainComponent::MainComponent()
@@ -53,9 +60,12 @@ MainComponent::MainComponent()
       geometryElementsPanel_(sceneModel_),
       geometryToolsPanel_(sceneModel_),
       libraryPanel_(sceneModel_, combinedSpecLibrary_, userSpecLibrary_, [this] { onUserSpecLibraryChanged(); }),
+      layersPanel_(sceneModel_),
       viewportDesign3D_(sceneModel_, EngineerViewportComponent::ViewMode::design3D, combinedSpecLibrary_),
       viewportAssemblyFloor_(sceneModel_, EngineerViewportComponent::ViewMode::assemblyFloor, combinedSpecLibrary_),
       viewportPlanarElectronics_(sceneModel_, EngineerViewportComponent::ViewMode::planarElectronics, combinedSpecLibrary_) {
+    sceneModel_.addListener(this);
+
     juce::String suiteErr;
     suiteSettings_ = suiteSettingsStore_.load(suiteErr);
 
@@ -144,7 +154,10 @@ MainComponent::MainComponent()
     setSize(1400, 900);
 }
 
-MainComponent::~MainComponent() = default;
+MainComponent::~MainComponent()
+{
+    sceneModel_.removeListener(this);
+}
 
 void MainComponent::paint(juce::Graphics& g) {
     g.fillAll(juce::Colour(0xff15181d));
@@ -163,11 +176,16 @@ void MainComponent::resized() {
 }
 
 juce::StringArray MainComponent::getMenuBarNames() {
-    return { "Panels" };
+    return { "File", "Panels" };
 }
 
-juce::PopupMenu MainComponent::getMenuForIndex(int, const juce::String&) {
+juce::PopupMenu MainComponent::getMenuForIndex(int topLevelMenuIndex, const juce::String&) {
     juce::PopupMenu menu;
+
+    if (topLevelMenuIndex == 0) {
+        menu.addItem(menuIdSaveDrawing, "Save Drawing", projectDirty_);
+        return menu;
+    }
 
     const auto isOpen = [this](const juce::String& id) {
         return dockManager_ != nullptr && dockManager_->isPanelOpen(id);
@@ -182,6 +200,7 @@ juce::PopupMenu MainComponent::getMenuForIndex(int, const juce::String&) {
     menu.addItem(menuIdPanelGeometryElements, "Geometry Elements", true, isOpen(panelIdGeometryElements));
     menu.addItem(menuIdPanelGeometryTools, "Geometry Tools", true, isOpen(panelIdGeometryTools));
     menu.addItem(menuIdPanelLibrary, "Part Library", true, isOpen(panelIdLibrary));
+    menu.addItem(menuIdPanelLayers, "Layers", true, isOpen(panelIdLayers));
     menu.addSeparator();
     menu.addItem(menuIdResetLayout, "Reset Dock Layout");
     return menu;
@@ -198,7 +217,9 @@ void MainComponent::menuItemSelected(int menuItemID, int) {
         case menuIdPanelGeometryElements: toggleDockPanel(panelIdGeometryElements, CreationDock::DockTargetZone::Bottom); break;
         case menuIdPanelGeometryTools:    toggleDockPanel(panelIdGeometryTools, CreationDock::DockTargetZone::Bottom); break;
         case menuIdPanelLibrary:          toggleDockPanel(panelIdLibrary, CreationDock::DockTargetZone::Left); break;
+        case menuIdPanelLayers:           toggleDockPanel(panelIdLayers, CreationDock::DockTargetZone::Right); break;
         case menuIdResetLayout:           if (dockManager_ != nullptr) dockManager_->resetLayout(); break;
+        case menuIdSaveDrawing:           saveSessionToDisk(true); break;
         default: break;
     }
 
@@ -227,8 +248,10 @@ void MainComponent::initialiseDockingWorkspace() {
         std::make_unique<NonOwningPanelHost>(geometryToolsPanel_), CreationDock::DockTargetZone::Bottom);
     dockManager_->registerPanel(panelIdLibrary, "Part Library",
         std::make_unique<NonOwningPanelHost>(libraryPanel_), CreationDock::DockTargetZone::Left);
+    dockManager_->registerPanel(panelIdLayers, "Layers",
+        std::make_unique<NonOwningPanelHost>(layersPanel_), CreationDock::DockTargetZone::Right);
 
-    // All nine start open -- a small, cohesive panel set with no reason to
+    // All ten start open -- a small, cohesive panel set with no reason to
     // hide any of them by default (unlike Engine's decision to close its
     // less-used modes/placeholders). All three viewports share the centre
     // tab group, same as the single viewport used to occupy -- dragging any
@@ -307,11 +330,14 @@ void MainComponent::saveSessionToDisk(bool userInitiated)
         return;
     }
 
-    // EngineerSceneModel has no serialization of its own yet (no ValueTree/JSON,
-    // no undo/redo -- see the docking rollout plan's persistence-gap decision),
-    // so there's nothing scene-shaped to write here yet. This still commits the
-    // project container/manifest so the project itself is real and browsable
-    // suite-wide; scene content just doesn't round-trip across relaunches yet.
+    const auto drawingJson = juce::JSON::toString(EngineerSceneSerialization::toVar(sceneModel_), true);
+    const juce::MemoryBlock drawingData(drawingJson.toRawUTF8(), drawingJson.getNumBytesAsUTF8());
+    if (! projectSession_.writeEntry(kEngineerDrawingEntryPath, drawingData))
+    {
+        headerBar_.setStatusText("Project save failed: could not write drawing data.");
+        return;
+    }
+
     juce::String commitError;
     if (! projectSession_.commit(commitError))
     {
@@ -319,15 +345,32 @@ void MainComponent::saveSessionToDisk(bool userInitiated)
         return;
     }
 
+    projectDirty_ = false;
+    menuItemsChanged();
+
     if (userInitiated)
         headerBar_.setStatusText("Project saved: " + projectSession_.getManifest().projectName);
 }
 
 void MainComponent::loadSessionFromDisk()
 {
-    // No scene-content serialization yet (see saveSessionToDisk) -- the project
-    // container/manifest still opens normally via ProjectWorkspaceService below;
-    // sceneModel_ just starts at its own built-in demo objects every time.
+    juce::MemoryBlock drawingData;
+    if (! projectSession_.readEntry(kEngineerDrawingEntryPath, drawingData))
+        return; // Nothing saved yet for this project -- keep sceneModel_'s constructor default.
+
+    const auto jsonText = juce::String::fromUTF8(static_cast<const char*>(drawingData.getData()),
+                                                  static_cast<int>(drawingData.getSize()));
+    const auto parsed = juce::JSON::parse(jsonText);
+
+    juce::String loadError;
+    if (! EngineerSceneSerialization::fromVar(parsed, sceneModel_, loadError))
+    {
+        juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::WarningIcon, "Could Not Load Drawing", loadError);
+        return;
+    }
+
+    projectDirty_ = false;
+    menuItemsChanged();
 }
 
 bool MainComponent::ensureProjectSessionActive(juce::String& errorMessage)
@@ -380,6 +423,12 @@ void MainComponent::saveAppSettings()
 
 void MainComponent::loadAppSettings()
 {
+}
+
+void MainComponent::engineerSceneModelChanged()
+{
+    projectDirty_ = true;
+    menuItemsChanged();
 }
 
 void MainComponent::onUserSpecLibraryChanged()

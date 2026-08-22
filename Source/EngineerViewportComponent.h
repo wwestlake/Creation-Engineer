@@ -47,6 +47,8 @@ public:
     void paint(juce::Graphics&) override {}
     void resized() override {}
     void mouseDown(const juce::MouseEvent& event) override;
+    void mouseDrag(const juce::MouseEvent& event) override;
+    void mouseUp(const juce::MouseEvent& event) override;
     void mouseWheelMove(const juce::MouseEvent& event, const juce::MouseWheelDetails& wheel) override;
 
     ViewMode getViewMode() const noexcept { return viewMode_; }
@@ -64,7 +66,11 @@ private:
                                  const juce::Matrix3D<float>& view, const juce::Matrix3D<float>& projection);
     void renderConnectorObject(const EngineerSceneModel::SceneObject& object, bool selected,
                                const juce::Matrix3D<float>& view, const juce::Matrix3D<float>& projection);
+    void renderDirectGeometryObject(const EngineerSceneModel::SceneObject& object, bool selected,
+                                    const juce::Matrix3D<float>& view, const juce::Matrix3D<float>& projection);
+    void renderVertexHandles(const juce::Matrix3D<float>& view, const juce::Matrix3D<float>& projection);
     int hitTestObject(juce::Point<float> point) const;
+    int hitTestVertex(juce::Point<float> point) const;
 
     ViewMode viewMode_;
     EngineerSceneModel& sceneModel_;
@@ -103,6 +109,28 @@ private:
         juce::String connectorId;
     };
     std::unordered_map<int, ConnectorMeshCache> connectorMeshes_;
+
+    // directGeometry objects render their own real vertex cage (Part K of
+    // the drawing/layers/vertex-editing plan) instead of the shared scaled
+    // boxMesh_. cachedVertices is compared element-wise each frame (a fixed
+    // 8 entries, negligible cost) to detect "needs re-upload" -- simpler and
+    // just as correct as a version counter for this vertex count.
+    struct DirectGeometryMeshCache
+    {
+        ce::Mesh mesh;
+        std::vector<juce::Vector3D<float>> cachedVertices;
+    };
+    std::unordered_map<int, DirectGeometryMeshCache> directGeometryMeshes_;
+
+    // Vertex-drag state (Vertex Edit Mode only): a plane parallel to the
+    // camera's view plane, fixed at the dragged vertex's position when the
+    // drag started -- every subsequent mouseDrag intersects the new mouse
+    // ray against this same fixed plane, giving a stable, unambiguous
+    // "move within the screen plane" drag rather than something depth-
+    // ambiguous like ray-vs-object-surface.
+    bool isDraggingVertex_ = false;
+    juce::Vector3D<float> vertexDragPlanePoint_;
+    juce::Vector3D<float> vertexDragPlaneNormal_;
 
     double lastFrameTimeSeconds_ = 0.0;
 

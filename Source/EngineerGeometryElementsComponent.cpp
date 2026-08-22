@@ -1,5 +1,7 @@
 #include "EngineerGeometryElementsComponent.h"
 
+#include "EngineerUnits.h"
+
 namespace
 {
 void configureButton(juce::TextButton& button)
@@ -8,6 +10,19 @@ void configureButton(juce::TextButton& button)
     button.setColour(juce::TextButton::buttonOnColourId, juce::Colour(0xff25354a));
     button.setColour(juce::TextButton::textColourOffId, juce::Colours::white);
     button.setColour(juce::TextButton::textColourOnId, juce::Colours::white);
+}
+
+void configureCaption(juce::Label& label, const juce::String& text)
+{
+    label.setText(text, juce::dontSendNotification);
+    label.setColour(juce::Label::textColourId, juce::Colour(0xffaebed0));
+}
+
+void configureEditor(juce::TextEditor& editor)
+{
+    editor.setColour(juce::TextEditor::backgroundColourId, juce::Colour(0xff111923));
+    editor.setColour(juce::TextEditor::outlineColourId, juce::Colour(0xff314155));
+    editor.setColour(juce::TextEditor::textColourId, juce::Colours::white);
 }
 }
 
@@ -18,10 +33,11 @@ EngineerGeometryElementsComponent::EngineerGeometryElementsComponent(EngineerSce
 
     titleLabel.setText("Geometry Elements", juce::dontSendNotification);
     titleLabel.setColour(juce::Label::textColourId, juce::Colours::white);
-    titleLabel.setFont(juce::Font(18.0f).boldened());
+    titleLabel.setFont(juce::Font(juce::FontOptions(18.0f)).boldened());
     addAndMakeVisible(titleLabel);
 
-    detailLabel.setText("Edit committed parts through engineering-friendly vertex, edge, and face proxies.", juce::dontSendNotification);
+    detailLabel.setText("Object Mode moves whole parts. Vertex Mode edits a committed part's real geometry.",
+                        juce::dontSendNotification);
     detailLabel.setColour(juce::Label::textColourId, juce::Colour(0xffaebed0));
     addAndMakeVisible(detailLabel);
 
@@ -34,25 +50,31 @@ EngineerGeometryElementsComponent::EngineerGeometryElementsComponent(EngineerSce
         addAndMakeVisible(button);
     };
 
-    wire(vertexButton);
-    wire(edgeButton);
-    wire(faceButton);
+    wire(objectModeButton);
+    wire(vertexModeButton);
     wire(previousButton);
     wire(nextButton);
-    wire(leftButton);
-    wire(rightButton);
-    wire(upButton);
-    wire(downButton);
 
-    vertexButton.onClick = [this] { selectKind(EngineerSceneModel::GeometryElementKind::vertex); };
-    edgeButton.onClick = [this] { selectKind(EngineerSceneModel::GeometryElementKind::edge); };
-    faceButton.onClick = [this] { selectKind(EngineerSceneModel::GeometryElementKind::face); };
-    previousButton.onClick = [this] { previousElement(); };
-    nextButton.onClick = [this] { nextElement(); };
-    leftButton.onClick = [this] { nudgeLeft(); };
-    rightButton.onClick = [this] { nudgeRight(); };
-    upButton.onClick = [this] { nudgeUp(); };
-    downButton.onClick = [this] { nudgeDown(); };
+    objectModeButton.onClick = [this] { setObjectMode(); };
+    vertexModeButton.onClick = [this] { setVertexMode(); };
+    previousButton.onClick = [this] { previousVertex(); };
+    nextButton.onClick = [this] { nextVertex(); };
+
+    configureCaption(vertexPositionLabel, "Selected Vertex Position (m)");
+    addAndMakeVisible(vertexPositionLabel);
+
+    configureEditor(vertexXEditor);
+    configureEditor(vertexYEditor);
+    configureEditor(vertexZEditor);
+    vertexXEditor.onFocusLost = [this] { commitVertexPosition(); };
+    vertexXEditor.onReturnKey = [this] { commitVertexPosition(); };
+    vertexYEditor.onFocusLost = [this] { commitVertexPosition(); };
+    vertexYEditor.onReturnKey = [this] { commitVertexPosition(); };
+    vertexZEditor.onFocusLost = [this] { commitVertexPosition(); };
+    vertexZEditor.onReturnKey = [this] { commitVertexPosition(); };
+    addAndMakeVisible(vertexXEditor);
+    addAndMakeVisible(vertexYEditor);
+    addAndMakeVisible(vertexZEditor);
 
     refreshFromScene();
 }
@@ -76,28 +98,26 @@ void EngineerGeometryElementsComponent::resized()
     selectionLabel.setBounds(area.removeFromTop(22));
     area.removeFromTop(10);
 
-    auto kindRow = area.removeFromTop(28);
-    vertexButton.setBounds(kindRow.removeFromLeft(80));
-    kindRow.removeFromLeft(8);
-    edgeButton.setBounds(kindRow.removeFromLeft(72));
-    kindRow.removeFromLeft(8);
-    faceButton.setBounds(kindRow.removeFromLeft(72));
+    auto modeRow = area.removeFromTop(28);
+    objectModeButton.setBounds(modeRow.removeFromLeft(80));
+    modeRow.removeFromLeft(8);
+    vertexModeButton.setBounds(modeRow.removeFromLeft(80));
     area.removeFromTop(10);
 
     auto navRow = area.removeFromTop(28);
     previousButton.setBounds(navRow.removeFromLeft(88));
     navRow.removeFromLeft(8);
     nextButton.setBounds(navRow.removeFromLeft(72));
-    area.removeFromTop(10);
+    area.removeFromTop(12);
 
-    auto nudgeRow = area.removeFromTop(28);
-    leftButton.setBounds(nudgeRow.removeFromLeft(72));
-    nudgeRow.removeFromLeft(8);
-    rightButton.setBounds(nudgeRow.removeFromLeft(72));
-    nudgeRow.removeFromLeft(8);
-    upButton.setBounds(nudgeRow.removeFromLeft(72));
-    nudgeRow.removeFromLeft(8);
-    downButton.setBounds(nudgeRow.removeFromLeft(72));
+    vertexPositionLabel.setBounds(area.removeFromTop(18));
+    auto vertexRow = area.removeFromTop(26);
+    const auto fieldWidth = (vertexRow.getWidth() - 16) / 3;
+    vertexXEditor.setBounds(vertexRow.removeFromLeft(fieldWidth));
+    vertexRow.removeFromLeft(8);
+    vertexYEditor.setBounds(vertexRow.removeFromLeft(fieldWidth));
+    vertexRow.removeFromLeft(8);
+    vertexZEditor.setBounds(vertexRow);
 }
 
 void EngineerGeometryElementsComponent::engineerSceneModelChanged()
@@ -108,65 +128,71 @@ void EngineerGeometryElementsComponent::engineerSceneModelChanged()
 
 void EngineerGeometryElementsComponent::refreshFromScene()
 {
-    const bool enabled = sceneModel.isSelectedObjectDirectGeometry();
-    const auto kind = sceneModel.getSelectedGeometryElementKind();
-    const auto index = sceneModel.getSelectedGeometryElementIndex();
-    const auto count = sceneModel.getSelectedGeometryElementCount();
+    const auto mode = sceneModel.getEditMode();
+    const auto vertexEditable = sceneModel.isSelectedObjectVertexEditable();
+    const auto index = sceneModel.getSelectedVertexIndex();
+    const auto count = sceneModel.getSelectedVertexCount();
 
-    selectionLabel.setText("Selected element: "
-                           + EngineerSceneModel::toDisplayString(kind)
-                           + " "
-                           + juce::String(index + 1)
-                           + " of "
-                           + juce::String(count),
+    objectModeButton.setToggleState(mode == EngineerSceneModel::EditMode::object, juce::dontSendNotification);
+    vertexModeButton.setToggleState(mode == EngineerSceneModel::EditMode::vertex, juce::dontSendNotification);
+    vertexModeButton.setEnabled(vertexEditable);
+
+    const auto showVertexControls = mode == EngineerSceneModel::EditMode::vertex && vertexEditable;
+    previousButton.setVisible(showVertexControls);
+    nextButton.setVisible(showVertexControls);
+    vertexPositionLabel.setVisible(showVertexControls);
+    vertexXEditor.setVisible(showVertexControls);
+    vertexYEditor.setVisible(showVertexControls);
+    vertexZEditor.setVisible(showVertexControls);
+
+    if (!vertexEditable)
+    {
+        selectionLabel.setText("Commit the selected object to direct geometry to edit its vertices.",
+                               juce::dontSendNotification);
+        return;
+    }
+
+    if (mode != EngineerSceneModel::EditMode::vertex)
+    {
+        selectionLabel.setText("Switch to Vertex Mode to edit this object's geometry.", juce::dontSendNotification);
+        return;
+    }
+
+    selectionLabel.setText("Selected vertex: " + juce::String(index + 1) + " of " + juce::String(count),
                            juce::dontSendNotification);
+    previousButton.setEnabled(index > 0);
+    nextButton.setEnabled(index < count - 1);
 
-    vertexButton.setToggleState(kind == EngineerSceneModel::GeometryElementKind::vertex, juce::dontSendNotification);
-    edgeButton.setToggleState(kind == EngineerSceneModel::GeometryElementKind::edge, juce::dontSendNotification);
-    faceButton.setToggleState(kind == EngineerSceneModel::GeometryElementKind::face, juce::dontSendNotification);
-
-    vertexButton.setEnabled(enabled);
-    edgeButton.setEnabled(enabled);
-    faceButton.setEnabled(enabled);
-    previousButton.setEnabled(enabled && index > 0);
-    nextButton.setEnabled(enabled && index < count - 1);
-    leftButton.setEnabled(enabled);
-    rightButton.setEnabled(enabled);
-    upButton.setEnabled(enabled);
-    downButton.setEnabled(enabled);
+    const auto position = sceneModel.getSelectedVertexPosition();
+    vertexXEditor.setText(EngineerUnits::formatLengthMeters(position.x), juce::dontSendNotification);
+    vertexYEditor.setText(EngineerUnits::formatLengthMeters(position.y), juce::dontSendNotification);
+    vertexZEditor.setText(EngineerUnits::formatLengthMeters(position.z), juce::dontSendNotification);
 }
 
-void EngineerGeometryElementsComponent::selectKind(EngineerSceneModel::GeometryElementKind kind)
+void EngineerGeometryElementsComponent::setObjectMode()
 {
-    sceneModel.setSelectedGeometryElementKind(kind);
+    sceneModel.setEditMode(EngineerSceneModel::EditMode::object);
 }
 
-void EngineerGeometryElementsComponent::previousElement()
+void EngineerGeometryElementsComponent::setVertexMode()
 {
-    sceneModel.selectPreviousGeometryElement();
+    sceneModel.setEditMode(EngineerSceneModel::EditMode::vertex);
 }
 
-void EngineerGeometryElementsComponent::nextElement()
+void EngineerGeometryElementsComponent::previousVertex()
 {
-    sceneModel.selectNextGeometryElement();
+    sceneModel.selectPreviousVertex();
 }
 
-void EngineerGeometryElementsComponent::nudgeLeft()
+void EngineerGeometryElementsComponent::nextVertex()
 {
-    sceneModel.nudgeSelectedGeometryElement({ -0.015f, 0.0f });
+    sceneModel.selectNextVertex();
 }
 
-void EngineerGeometryElementsComponent::nudgeRight()
+void EngineerGeometryElementsComponent::commitVertexPosition()
 {
-    sceneModel.nudgeSelectedGeometryElement({ 0.015f, 0.0f });
-}
-
-void EngineerGeometryElementsComponent::nudgeUp()
-{
-    sceneModel.nudgeSelectedGeometryElement({ 0.0f, -0.015f });
-}
-
-void EngineerGeometryElementsComponent::nudgeDown()
-{
-    sceneModel.nudgeSelectedGeometryElement({ 0.0f, 0.015f });
+    const auto current = sceneModel.getSelectedVertexPosition();
+    sceneModel.setSelectedVertexPosition({ EngineerUnits::parseLengthMeters(vertexXEditor.getText(), current.x),
+                                           EngineerUnits::parseLengthMeters(vertexYEditor.getText(), current.y),
+                                           EngineerUnits::parseLengthMeters(vertexZEditor.getText(), current.z) });
 }

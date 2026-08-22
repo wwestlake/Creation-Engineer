@@ -27,6 +27,21 @@ juce::Matrix3D<float> makeModelMatrix(juce::Vector3D<float> position, juce::Vect
                                   position.x, position.y, position.z, 1.0f);
 }
 
+// Component-wise tint/opacity multiply -- applied to every object's base
+// colour right before it's uploaded to uBaseColour, regardless of primitive
+// kind, so a layer's appearance is consistent across primitives, library
+// parts, and connectors alike.
+juce::Colour applyLayerTint(juce::Colour colour, const EngineerSceneModel::Layer* layer)
+{
+    if (layer == nullptr)
+        return colour;
+
+    return juce::Colour::fromFloatRGBA(colour.getFloatRed() * layer->tint.getFloatRed(),
+                                       colour.getFloatGreen() * layer->tint.getFloatGreen(),
+                                       colour.getFloatBlue() * layer->tint.getFloatBlue(),
+                                       colour.getFloatAlpha() * layer->opacity);
+}
+
 juce::Colour objectColour(const EngineerSceneModel::SceneObject& object, bool selected, bool mirrored)
 {
     auto colour = juce::Colour(0xff7ea0c7);
@@ -96,6 +111,33 @@ juce::Vector3D<float> unprojectPoint(float ndcX, float ndcY, float ndcZ, const s
     const float w = m[3] * ndcX + m[7] * ndcY + m[11] * ndcZ + m[15];
     const float invW = std::abs(w) > 0.0001f ? 1.0f / w : 1.0f;
     return { x * invW, y * invW, z * invW };
+}
+
+// Forward projection (world -> screen), the inverse direction of
+// unprojectPoint below -- used for vertex-handle hit-testing rather than a
+// 3D ray-vs-point distance test, so pick tolerance is a constant screen-
+// space radius regardless of distance from the camera.
+juce::Point<float> projectToScreen(juce::Vector3D<float> worldPos, const juce::Matrix3D<float>& viewProjection,
+                                   juce::Rectangle<float> area)
+{
+    const auto& m = viewProjection.mat;
+    const float x = m[0] * worldPos.x + m[4] * worldPos.y + m[8] * worldPos.z + m[12];
+    const float y = m[1] * worldPos.x + m[5] * worldPos.y + m[9] * worldPos.z + m[13];
+    const float w = m[3] * worldPos.x + m[7] * worldPos.y + m[11] * worldPos.z + m[15];
+    const float invW = std::abs(w) > 0.0001f ? 1.0f / w : 1.0f;
+    const float ndcX = x * invW;
+    const float ndcY = y * invW;
+    return { area.getX() + (ndcX * 0.5f + 0.5f) * area.getWidth(),
+            area.getY() + (1.0f - (ndcY * 0.5f + 0.5f)) * area.getHeight() };
+}
+
+// Extracts the camera's world-space forward direction straight from the
+// view matrix's third column (SetLookAt stores -forward there, see
+// Camera.cpp) -- works uniformly for FreeCamera or the ortho controller,
+// without needing to ask either one directly.
+juce::Vector3D<float> cameraForwardFromView(const juce::Matrix3D<float>& view)
+{
+    return { -view.mat[8], -view.mat[9], -view.mat[10] };
 }
 
 bool intersectRayWithAabb(Ray ray, juce::Vector3D<float> minimum, juce::Vector3D<float> maximum, float& distanceOut)
@@ -173,9 +215,56 @@ void EngineerViewportComponent::mouseDown(const juce::MouseEvent& event)
     if (!event.mods.isLeftButtonDown())
         return;
 
+    if (sceneModel_.getEditMode() == EngineerSceneModel::EditMode::vertex)
+    {
+        const auto vertexIndex = hitTestVertex(event.position);
+        if (vertexIndex < 0)
+            return;
+
+        sceneModel_.selectVertex(vertexIndex);
+        isDraggingVertex_ = true;
+        vertexDragPlanePoint_ = sceneModel_.getSelectedVertexPosition();
+        vertexDragPlaneNormal_ = cameraForwardFromView(camera_.ViewMatrix());
+        return;
+    }
+
     const auto clickedIndex = hitTestObject(event.position);
     if (clickedIndex >= 0)
         sceneModel_.selectObject(clickedIndex);
+}
+
+void EngineerViewportComponent::mouseDrag(const juce::MouseEvent& event)
+{
+    if (!isDraggingVertex_)
+        return;
+
+    const auto area = getLocalBounds().toFloat();
+    if (area.getWidth() <= 0.0f || area.getHeight() <= 0.0f)
+        return;
+
+    std::array<float, 16> inverseViewProjection{};
+    {
+        const juce::ScopedLock lock(stateLock_);
+        inverseViewProjection = lastInverseViewProjection_;
+    }
+
+    const auto ndcX = (event.position.x / area.getWidth()) * 2.0f - 1.0f;
+    const auto ndcY = 1.0f - (event.position.y / area.getHeight()) * 2.0f;
+    const auto nearPoint = unprojectPoint(ndcX, ndcY, -1.0f, inverseViewProjection);
+    const auto farPoint = unprojectPoint(ndcX, ndcY, 1.0f, inverseViewProjection);
+    const auto rayDirection = (farPoint - nearPoint).normalised();
+
+    const auto denom = rayDirection * vertexDragPlaneNormal_;
+    if (std::abs(denom) < 1.0e-6f)
+        return;
+
+    const auto t = ((vertexDragPlanePoint_ - nearPoint) * vertexDragPlaneNormal_) / denom;
+    sceneModel_.setSelectedVertexPosition(nearPoint + rayDirection * t);
+}
+
+void EngineerViewportComponent::mouseUp(const juce::MouseEvent&)
+{
+    isDraggingVertex_ = false;
 }
 
 void EngineerViewportComponent::mouseWheelMove(const juce::MouseEvent&, const juce::MouseWheelDetails& wheel)
@@ -271,27 +360,66 @@ void EngineerViewportComponent::renderOpenGL()
 
     const auto selectedIndex = sceneModel_.getSelectedObjectIndex();
     const auto& objects = sceneModel_.getObjects();
-    for (size_t i = 0; i < objects.size(); ++i)
-    {
-        const auto& object = objects[i];
-        const bool selected = static_cast<int>(i) == selectedIndex;
 
+    const auto dispatchRender = [&](const EngineerSceneModel::SceneObject& object, bool selected)
+    {
         if (object.primitiveType == "LibraryPart")
         {
             renderLibraryPartObject(object, selected, camera_.ViewMatrix(), camera_.ProjectionMatrix());
-            continue;
+            return;
         }
 
         if (object.primitiveType == "Connector")
         {
             renderConnectorObject(object, selected, camera_.ViewMatrix(), camera_.ProjectionMatrix());
-            continue;
+            return;
+        }
+
+        if (object.authoringState == EngineerSceneModel::AuthoringState::directGeometry && !object.editableVertices.empty())
+        {
+            renderDirectGeometryObject(object, selected, camera_.ViewMatrix(), camera_.ProjectionMatrix());
+            return;
         }
 
         renderObject(object, selected, false, camera_.ViewMatrix(), camera_.ProjectionMatrix());
         if (object.mirrorXEnabled)
             renderObject(object, selected, true, camera_.ViewMatrix(), camera_.ProjectionMatrix());
+    };
+
+    // Two passes so translucent layers (opacity < 1) blend correctly: opaque
+    // objects render first with the normal depth-write state already set up
+    // above; translucent ones render second with blending enabled and depth
+    // writes off (so they don't wrongly occlude anything drawn after them)
+    // while still depth-*tested* against the opaque pass. GL_BLEND/
+    // glDepthMask must be reset every frame, same discipline as GL_DEPTH_TEST/
+    // GL_CULL_FACE above -- JUCE's own 2D compositor resets state after this
+    // callback returns.
+    for (size_t i = 0; i < objects.size(); ++i)
+    {
+        const auto& object = objects[i];
+        const auto* layer = sceneModel_.findLayer(object.layerId);
+        if (layer != nullptr && (!layer->visible || layer->opacity < 0.999f))
+            continue;
+
+        dispatchRender(object, static_cast<int>(i) == selectedIndex);
     }
+
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glDepthMask(GL_FALSE);
+    for (size_t i = 0; i < objects.size(); ++i)
+    {
+        const auto& object = objects[i];
+        const auto* layer = sceneModel_.findLayer(object.layerId);
+        if (layer == nullptr || !layer->visible || layer->opacity >= 0.999f)
+            continue;
+
+        dispatchRender(object, static_cast<int>(i) == selectedIndex);
+    }
+    glDepthMask(GL_TRUE);
+    glDisable(GL_BLEND);
+
+    renderVertexHandles(camera_.ViewMatrix(), camera_.ProjectionMatrix());
 }
 
 void EngineerViewportComponent::renderLibraryPartObject(const EngineerSceneModel::SceneObject& object, bool selected,
@@ -322,6 +450,7 @@ void EngineerViewportComponent::renderLibraryPartObject(const EngineerSceneModel
     auto colour = juce::Colour(0xff6fae7c);
     if (selected)
         colour = colour.brighter(0.55f);
+    colour = applyLayerTint(colour, sceneModel_.findLayer(object.layerId));
 
     const auto model = juce::Matrix3D<float>::fromTranslation(object.position);
     litProgram_->use();
@@ -363,6 +492,7 @@ void EngineerViewportComponent::renderConnectorObject(const EngineerSceneModel::
     auto colour = juce::Colour(0xffb0b6bd);
     if (selected)
         colour = colour.brighter(0.55f);
+    colour = applyLayerTint(colour, sceneModel_.findLayer(object.layerId));
 
     const auto model = juce::Matrix3D<float>::fromTranslation(object.position);
     litProgram_->use();
@@ -372,6 +502,81 @@ void EngineerViewportComponent::renderConnectorObject(const EngineerSceneModel::
     litProgram_->setUniform("uBaseColour", colour.getFloatRed(), colour.getFloatGreen(), colour.getFloatBlue(), colour.getFloatAlpha());
     litProgram_->setUniform("uLightDirection", 0.45f, -1.0f, 0.35f);
     cache.mesh.Draw();
+}
+
+void EngineerViewportComponent::renderDirectGeometryObject(const EngineerSceneModel::SceneObject& object, bool selected,
+                                                            const juce::Matrix3D<float>& view,
+                                                            const juce::Matrix3D<float>& projection)
+{
+    if (litProgram_ == nullptr || object.editableVertices.size() != 8)
+        return;
+
+    auto& cache = directGeometryMeshes_[object.objectId];
+    bool changed = cache.cachedVertices.size() != object.editableVertices.size();
+    if (!changed)
+    {
+        for (size_t i = 0; i < object.editableVertices.size(); ++i)
+        {
+            const auto& a = cache.cachedVertices[i];
+            const auto& b = object.editableVertices[i];
+            if (a.x != b.x || a.y != b.y || a.z != b.z)
+            {
+                changed = true;
+                break;
+            }
+        }
+    }
+
+    if (changed)
+    {
+        std::vector<ce::Vertex> vertices;
+        std::vector<GLuint> indices;
+        ce::BuildFlatShadedMeshFromCage(object.editableVertices, vertices, indices);
+        cache.mesh.Upload(vertices, indices);
+        cache.cachedVertices = object.editableVertices;
+    }
+
+    auto colour = juce::Colour(0xffd6a250);
+    if (selected)
+        colour = colour.brighter(0.55f);
+    colour = applyLayerTint(colour, sceneModel_.findLayer(object.layerId));
+
+    // editableVertices already store world-space positions, so the mesh
+    // built from them needs no translate/scale -- identity model matrix.
+    const juce::Matrix3D<float> model;
+    litProgram_->use();
+    litProgram_->setUniformMat4("uModel", model.mat, 1, GL_FALSE);
+    litProgram_->setUniformMat4("uView", view.mat, 1, GL_FALSE);
+    litProgram_->setUniformMat4("uProjection", projection.mat, 1, GL_FALSE);
+    litProgram_->setUniform("uBaseColour", colour.getFloatRed(), colour.getFloatGreen(), colour.getFloatBlue(), colour.getFloatAlpha());
+    litProgram_->setUniform("uLightDirection", 0.45f, -1.0f, 0.35f);
+    cache.mesh.Draw();
+}
+
+void EngineerViewportComponent::renderVertexHandles(const juce::Matrix3D<float>& view, const juce::Matrix3D<float>& projection)
+{
+    if (litProgram_ == nullptr || sceneModel_.getEditMode() != EngineerSceneModel::EditMode::vertex)
+        return;
+
+    const auto& object = sceneModel_.getSelectedObject();
+    if (object.editableVertices.empty())
+        return;
+
+    const juce::Vector3D<float> handleSize { 0.015f, 0.015f, 0.015f };
+    for (size_t i = 0; i < object.editableVertices.size(); ++i)
+    {
+        const auto colour = static_cast<int>(i) == object.selectedVertexIndex ? juce::Colour(0xffffe08a)
+                                                                               : juce::Colour(0xff59d0ff);
+        const auto model = makeModelMatrix(object.editableVertices[i], handleSize);
+
+        litProgram_->use();
+        litProgram_->setUniformMat4("uModel", model.mat, 1, GL_FALSE);
+        litProgram_->setUniformMat4("uView", view.mat, 1, GL_FALSE);
+        litProgram_->setUniformMat4("uProjection", projection.mat, 1, GL_FALSE);
+        litProgram_->setUniform("uBaseColour", colour.getFloatRed(), colour.getFloatGreen(), colour.getFloatBlue(), 1.0f);
+        litProgram_->setUniform("uLightDirection", 0.45f, -1.0f, 0.35f);
+        boxMesh_.Draw();
+    }
 }
 
 void EngineerViewportComponent::renderObject(const EngineerSceneModel::SceneObject& object,
@@ -389,7 +594,7 @@ void EngineerViewportComponent::renderObject(const EngineerSceneModel::SceneObje
         size.y += object.geometryDepth;
 
     const auto model = makeModelMatrix(position, size);
-    const auto colour = objectColour(object, selected, mirrored);
+    const auto colour = applyLayerTint(objectColour(object, selected, mirrored), sceneModel_.findLayer(object.layerId));
 
     litProgram_->use();
     litProgram_->setUniformMat4("uModel", model.mat, 1, GL_FALSE);
@@ -409,6 +614,7 @@ void EngineerViewportComponent::openGLContextClosing()
     shaderComposer_.reset();
     libraryPartMeshes_.clear();
     connectorMeshes_.clear();
+    directGeometryMeshes_.clear();
 }
 
 int EngineerViewportComponent::hitTestObject(juce::Point<float> point) const
@@ -457,6 +663,34 @@ int EngineerViewportComponent::hitTestObject(juce::Point<float> point) const
         testObjectAt(object.position);
         if (object.mirrorXEnabled)
             testObjectAt({ -object.position.x, object.position.y, object.position.z });
+    }
+
+    return bestIndex;
+}
+
+int EngineerViewportComponent::hitTestVertex(juce::Point<float> point) const
+{
+    const auto& object = sceneModel_.getSelectedObject();
+    if (object.editableVertices.empty())
+        return -1;
+
+    const auto area = getLocalBounds().toFloat();
+    if (area.getWidth() <= 0.0f || area.getHeight() <= 0.0f)
+        return -1;
+
+    const auto viewProjection = camera_.ProjectionMatrix() * camera_.ViewMatrix();
+
+    int bestIndex = -1;
+    float bestDistanceSq = 144.0f; // 12px pick radius, squared.
+    for (size_t i = 0; i < object.editableVertices.size(); ++i)
+    {
+        const auto screenPos = projectToScreen(object.editableVertices[i], viewProjection, area);
+        const auto distanceSq = point.getDistanceSquaredFrom(screenPos);
+        if (distanceSq < bestDistanceSq)
+        {
+            bestDistanceSq = distanceSq;
+            bestIndex = static_cast<int>(i);
+        }
     }
 
     return bestIndex;

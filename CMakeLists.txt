@@ -66,6 +66,12 @@ target_sources(CreationEngineerApp PRIVATE
     Source/EngineerGeometryToolsComponent.h
     Source/EngineerLibraryComponent.cpp
     Source/EngineerLibraryComponent.h
+    Source/EngineerUnits.cpp
+    Source/EngineerUnits.h
+    Source/EngineerLayersComponent.cpp
+    Source/EngineerLayersComponent.h
+    Source/EngineerSceneSerialization.cpp
+    Source/EngineerSceneSerialization.h
 )
 
 target_include_directories(CreationEngineerApp PRIVATE

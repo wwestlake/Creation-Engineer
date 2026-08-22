@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <memory>
 
 namespace
 {
@@ -58,16 +59,21 @@ juce::String makeUniqueObjectName(const std::vector<EngineerSceneModel::SceneObj
     return candidate + " Copy";
 }
 
-int geometryElementCountForKind(EngineerSceneModel::GeometryElementKind kind)
+// Fixed 8-corner order every editable vertex cage uses (bit0=+X, bit1=+Y,
+// bit2=+Z) -- matches shared/Render's BuildFlatShadedMeshFromCage exactly,
+// so seeding here and expanding-for-rendering there never disagree.
+std::vector<juce::Vector3D<float>> makeBoxCage(juce::Vector3D<float> position, juce::Vector3D<float> size)
 {
-    switch (kind)
+    const auto half = size * 0.5f;
+    std::vector<juce::Vector3D<float>> corners;
+    corners.reserve(8);
+    for (int i = 0; i < 8; ++i)
     {
-        case EngineerSceneModel::GeometryElementKind::vertex: return 4;
-        case EngineerSceneModel::GeometryElementKind::edge: return 4;
-        case EngineerSceneModel::GeometryElementKind::face: return 1;
+        corners.push_back({ position.x + ((i & 1) ? half.x : -half.x),
+                            position.y + ((i & 2) ? half.y : -half.y),
+                            position.z + ((i & 4) ? half.z : -half.z) });
     }
-
-    return 1;
+    return corners;
 }
 }
 
@@ -76,22 +82,17 @@ EngineerSceneModel::EngineerSceneModel()
     // Real-unit (meters) demo scene, Y-up, objects resting on the y=0 grid
     // (position.y == size.y * 0.5). Replaces the old [0,1]-normalized-plane
     // mockup coordinates -- see the docking rollout plan's Part B.
+    // A single default object -- 10cm cube, centered at the origin, metric
+    // units -- rather than a demo assembly. Real content starts from the
+    // library panel or the Navigator's "Add Primitive" actions.
     objects = {
-        makeSceneObject("Base Frame", "Block", { 0.0f, 0.15f, 0.0f }, { 1.6f, 0.3f, 1.1f }, false, {}, 0.0f, 0.0f, AuthoringState::primitive),
-        makeSceneObject("Drive Housing",
-                        "Cylinder",
-                        { 1.2f, 0.35f, -0.4f },
-                        { 0.5f, 0.7f, 0.5f },
-                        true,
-                        { { "Mirror X", true, 1.0f } },
-                        0.0f,
-                        0.0f,
-                        AuthoringState::modifierStack),
-        makeSceneObject("Top Plate", "Plate", { 0.6f, 0.65f, 0.3f }, { 1.7f, 0.15f, 0.7f }, false, {}, 0.07f, 0.01f, AuthoringState::directGeometry)
+        makeSceneObject("Cube", "Block", { 0.0f, 0.0f, 0.0f }, { 0.1f, 0.1f, 0.1f }, false, {}, 0.0f, 0.0f, AuthoringState::primitive)
     };
 
     for (auto& object : objects)
         object.objectId = nextObjectId_++;
+
+    layers.push_back({ "layer:default", "Default", true, juce::Colours::white, 1.0f });
 }
 
 const std::vector<EngineerSceneModel::SceneObject>& EngineerSceneModel::getObjects() const noexcept
@@ -117,7 +118,6 @@ EngineerSceneModel::SceneObject& EngineerSceneModel::getSelectedObjectMutable() 
 void EngineerSceneModel::selectObject(int index) noexcept
 {
     selectedObjectIndex = juce::jlimit(0, static_cast<int>(objects.size()) - 1, index);
-    selectedGeometryElementIndex = juce::jlimit(0, getSelectedGeometryElementCount() - 1, selectedGeometryElementIndex);
     notifyListeners();
 }
 
@@ -420,6 +420,8 @@ void EngineerSceneModel::commitSelectedObjectToDirectGeometry()
     object.mirrorXEnabled = false;
     object.geometryDepth = juce::jmax(object.geometryDepth, 0.05f);
     object.bevelAmount = juce::jlimit(0.0f, 0.08f, object.bevelAmount);
+    object.editableVertices = makeBoxCage(object.position, object.size);
+    object.selectedVertexIndex = 0;
     notifyListeners();
 }
 
@@ -429,6 +431,8 @@ void EngineerSceneModel::restoreSelectedObjectPrimitiveWorkflow()
     object.modifiers.clear();
     object.geometryDepth = 0.0f;
     object.bevelAmount = 0.0f;
+    object.editableVertices.clear();
+    object.selectedVertexIndex = -1;
     syncDerivedState(object);
     notifyListeners();
 }
@@ -471,124 +475,101 @@ void EngineerSceneModel::setGeometrySnapStep(float step) noexcept
     notifyListeners();
 }
 
-EngineerSceneModel::GeometryElementKind EngineerSceneModel::getSelectedGeometryElementKind() const noexcept
+EngineerSceneModel::EditMode EngineerSceneModel::getEditMode() const noexcept
 {
-    return selectedGeometryElementKind;
+    return editMode_;
 }
 
-void EngineerSceneModel::setSelectedGeometryElementKind(GeometryElementKind kind) noexcept
+void EngineerSceneModel::setEditMode(EditMode mode) noexcept
 {
-    selectedGeometryElementKind = kind;
-    selectedGeometryElementIndex = juce::jlimit(0, getSelectedGeometryElementCount() - 1, 0);
+    editMode_ = mode;
     notifyListeners();
 }
 
-int EngineerSceneModel::getSelectedGeometryElementIndex() const noexcept
+bool EngineerSceneModel::isSelectedObjectVertexEditable() const noexcept
 {
-    return selectedGeometryElementIndex;
+    return !getSelectedObject().editableVertices.empty();
 }
 
-void EngineerSceneModel::setSelectedGeometryElementIndex(int index) noexcept
+int EngineerSceneModel::getSelectedVertexIndex() const noexcept
 {
-    selectedGeometryElementIndex = juce::jlimit(0, getSelectedGeometryElementCount() - 1, index);
-    notifyListeners();
+    return getSelectedObject().selectedVertexIndex;
 }
 
-int EngineerSceneModel::getSelectedGeometryElementCount() const noexcept
+int EngineerSceneModel::getSelectedVertexCount() const noexcept
 {
-    return geometryElementCountForKind(selectedGeometryElementKind);
+    return static_cast<int>(getSelectedObject().editableVertices.size());
 }
 
-void EngineerSceneModel::selectPreviousGeometryElement() noexcept
-{
-    selectedGeometryElementIndex = juce::jlimit(0, getSelectedGeometryElementCount() - 1, selectedGeometryElementIndex - 1);
-    notifyListeners();
-}
-
-void EngineerSceneModel::selectNextGeometryElement() noexcept
-{
-    selectedGeometryElementIndex = juce::jlimit(0, getSelectedGeometryElementCount() - 1, selectedGeometryElementIndex + 1);
-    notifyListeners();
-}
-
-// delta stays a 2D juce::Point<float> (callers are fixed-magnitude panel
-// buttons, see EngineerGeometryToolsComponent/EngineerGeometryElementsComponent)
-// -- it always meant "footprint plane" motion, which was X/Y in the old
-// normalized-2D model and is X/Z now that position/size are real 3D. Height
-// (Y) was never touched by these calls before and still isn't.
-void EngineerSceneModel::nudgeSelectedGeometryElement(juce::Point<float> delta)
+void EngineerSceneModel::selectVertex(int vertexIndex) noexcept
 {
     auto& object = getSelectedObjectMutable();
-    if (object.authoringState != AuthoringState::directGeometry)
+    if (object.editableVertices.empty())
         return;
 
-    delta = snapDelta(delta);
+    object.selectedVertexIndex = juce::jlimit(0, static_cast<int>(object.editableVertices.size()) - 1, vertexIndex);
+    notifyListeners();
+}
 
-    const auto minSize = 0.05f;
+void EngineerSceneModel::selectPreviousVertex() noexcept
+{
+    auto& object = getSelectedObjectMutable();
+    if (object.editableVertices.empty())
+        return;
 
-    switch (selectedGeometryElementKind)
+    const auto count = static_cast<int>(object.editableVertices.size());
+    object.selectedVertexIndex = juce::jlimit(0, count - 1, object.selectedVertexIndex - 1);
+    notifyListeners();
+}
+
+void EngineerSceneModel::selectNextVertex() noexcept
+{
+    auto& object = getSelectedObjectMutable();
+    if (object.editableVertices.empty())
+        return;
+
+    const auto count = static_cast<int>(object.editableVertices.size());
+    object.selectedVertexIndex = juce::jlimit(0, count - 1, object.selectedVertexIndex + 1);
+    notifyListeners();
+}
+
+juce::Vector3D<float> EngineerSceneModel::getSelectedVertexPosition() const noexcept
+{
+    const auto& object = getSelectedObject();
+    if (object.selectedVertexIndex < 0 || object.selectedVertexIndex >= static_cast<int>(object.editableVertices.size()))
+        return {};
+
+    return object.editableVertices[static_cast<size_t>(object.selectedVertexIndex)];
+}
+
+void EngineerSceneModel::setSelectedVertexPosition(juce::Vector3D<float> worldPosition)
+{
+    auto& object = getSelectedObjectMutable();
+    if (object.selectedVertexIndex < 0 || object.selectedVertexIndex >= static_cast<int>(object.editableVertices.size()))
+        return;
+
+    object.editableVertices[static_cast<size_t>(object.selectedVertexIndex)] = worldPosition;
+
+    // position/size stay a derived AABB of editableVertices once a cage
+    // exists -- the ray-vs-AABB hit-test path and the layer-tint colour path
+    // both still read position/size uniformly for every object kind, so this
+    // keeps hit-testing correct even though the vertex cage (not the AABB)
+    // is what's authoritative for rendering. See the drawing/layers/vertex-
+    // editing plan's Risks section.
+    juce::Vector3D<float> minimum = object.editableVertices.front();
+    juce::Vector3D<float> maximum = object.editableVertices.front();
+    for (const auto& vertex : object.editableVertices)
     {
-        case GeometryElementKind::vertex:
-        {
-            auto left = object.position.x - object.size.x * 0.5f;
-            auto right = object.position.x + object.size.x * 0.5f;
-            auto top = object.position.z - object.size.z * 0.5f;
-            auto bottom = object.position.z + object.size.z * 0.5f;
-
-            switch (selectedGeometryElementIndex)
-            {
-                case 0: left += delta.x; top += delta.y; break;
-                case 1: right += delta.x; top += delta.y; break;
-                case 2: right += delta.x; bottom += delta.y; break;
-                case 3: left += delta.x; bottom += delta.y; break;
-                default: break;
-            }
-
-            if (right - left < minSize)
-                right = left + minSize;
-            if (bottom - top < minSize)
-                bottom = top + minSize;
-
-            object.position.x = (left + right) * 0.5f;
-            object.position.z = (top + bottom) * 0.5f;
-            object.size.x = right - left;
-            object.size.z = bottom - top;
-            break;
-        }
-
-        case GeometryElementKind::edge:
-        {
-            switch (selectedGeometryElementIndex)
-            {
-                case 0:
-                    object.position.z += delta.y * 0.5f;
-                    object.size.z -= delta.y;
-                    break;
-                case 1:
-                    object.position.x += delta.x * 0.5f;
-                    object.size.x += delta.x;
-                    break;
-                case 2:
-                    object.position.z += delta.y * 0.5f;
-                    object.size.z += delta.y;
-                    break;
-                case 3:
-                    object.position.x += delta.x * 0.5f;
-                    object.size.x -= delta.x;
-                    break;
-                default:
-                    break;
-            }
-            break;
-        }
-
-        case GeometryElementKind::face:
-            object.position.x += delta.x;
-            object.position.z += delta.y;
-            break;
+        minimum.x = juce::jmin(minimum.x, vertex.x);
+        minimum.y = juce::jmin(minimum.y, vertex.y);
+        minimum.z = juce::jmin(minimum.z, vertex.z);
+        maximum.x = juce::jmax(maximum.x, vertex.x);
+        maximum.y = juce::jmax(maximum.y, vertex.y);
+        maximum.z = juce::jmax(maximum.z, vertex.z);
     }
+    object.position = (minimum + maximum) * 0.5f;
+    object.size = maximum - minimum;
 
-    clampDirectGeometryObject(object);
     notifyListeners();
 }
 
@@ -674,18 +655,6 @@ juce::String EngineerSceneModel::toDisplayString(GeometryTool tool)
     return "Translate";
 }
 
-juce::String EngineerSceneModel::toDisplayString(GeometryElementKind kind)
-{
-    switch (kind)
-    {
-        case GeometryElementKind::vertex: return "Vertex";
-        case GeometryElementKind::edge: return "Edge";
-        case GeometryElementKind::face: return "Face";
-    }
-
-    return "Vertex";
-}
-
 EngineerSceneModel::CameraPreset EngineerSceneModel::getCameraPreset() const noexcept
 {
     return cameraPreset;
@@ -694,6 +663,114 @@ EngineerSceneModel::CameraPreset EngineerSceneModel::getCameraPreset() const noe
 void EngineerSceneModel::setCameraPreset(CameraPreset preset) noexcept
 {
     cameraPreset = preset;
+    notifyListeners();
+}
+
+const std::vector<EngineerSceneModel::Layer>& EngineerSceneModel::getLayers() const noexcept
+{
+    return layers;
+}
+
+const EngineerSceneModel::Layer* EngineerSceneModel::findLayer(const juce::String& layerId) const noexcept
+{
+    for (const auto& layer : layers)
+        if (layer.id == layerId)
+            return std::addressof(layer);
+
+    return nullptr;
+}
+
+void EngineerSceneModel::addLayer(const juce::String& name)
+{
+    layers.push_back({ juce::Uuid().toString(), name, true, juce::Colours::white, 1.0f });
+    notifyListeners();
+}
+
+bool EngineerSceneModel::canRemoveLayer(const juce::String& layerId) const noexcept
+{
+    return layerId != "layer:default" && findLayer(layerId) != nullptr;
+}
+
+void EngineerSceneModel::removeLayer(const juce::String& layerId)
+{
+    if (!canRemoveLayer(layerId))
+        return;
+
+    for (auto& object : objects)
+        if (object.layerId == layerId)
+            object.layerId = "layer:default";
+
+    layers.erase(std::remove_if(layers.begin(), layers.end(),
+                                [&layerId](const Layer& layer) { return layer.id == layerId; }),
+                layers.end());
+    notifyListeners();
+}
+
+void EngineerSceneModel::renameLayer(const juce::String& layerId, const juce::String& name)
+{
+    for (auto& layer : layers)
+        if (layer.id == layerId)
+            layer.name = name;
+
+    notifyListeners();
+}
+
+void EngineerSceneModel::setLayerVisible(const juce::String& layerId, bool visible)
+{
+    for (auto& layer : layers)
+        if (layer.id == layerId)
+            layer.visible = visible;
+
+    notifyListeners();
+}
+
+void EngineerSceneModel::setLayerTint(const juce::String& layerId, juce::Colour tint)
+{
+    for (auto& layer : layers)
+        if (layer.id == layerId)
+            layer.tint = tint;
+
+    notifyListeners();
+}
+
+void EngineerSceneModel::setLayerOpacity(const juce::String& layerId, float opacity)
+{
+    for (auto& layer : layers)
+        if (layer.id == layerId)
+            layer.opacity = juce::jlimit(0.0f, 1.0f, opacity);
+
+    notifyListeners();
+}
+
+void EngineerSceneModel::moveObjectToLayer(int objectIndex, const juce::String& layerId)
+{
+    if (objectIndex < 0 || objectIndex >= static_cast<int>(objects.size()))
+        return;
+
+    objects[static_cast<size_t>(objectIndex)].layerId = findLayer(layerId) != nullptr ? layerId : juce::String("layer:default");
+    notifyListeners();
+}
+
+int EngineerSceneModel::getNextObjectIdForSerialization() const noexcept
+{
+    return nextObjectId_;
+}
+
+void EngineerSceneModel::loadDrawing(std::vector<SceneObject> loadedObjects, std::vector<Layer> loadedLayers,
+                                     int loadedSelectedObjectIndex, int loadedNextObjectId,
+                                     CameraPreset loadedCameraPreset)
+{
+    if (loadedObjects.empty())
+        loadedObjects.push_back(makeSceneObject("Cube", "Block", { 0.0f, 0.0f, 0.0f }, { 0.1f, 0.1f, 0.1f },
+                                                false, {}, 0.0f, 0.0f, AuthoringState::primitive));
+    if (loadedLayers.empty())
+        loadedLayers.push_back({ "layer:default", "Default", true, juce::Colours::white, 1.0f });
+
+    objects = std::move(loadedObjects);
+    layers = std::move(loadedLayers);
+    selectedObjectIndex = juce::jlimit(0, static_cast<int>(objects.size()) - 1, loadedSelectedObjectIndex);
+    nextObjectId_ = juce::jmax(1, loadedNextObjectId);
+    cameraPreset = loadedCameraPreset;
     notifyListeners();
 }
 

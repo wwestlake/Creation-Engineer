@@ -16,13 +16,15 @@
 #include "EngineerGeometryElementsComponent.h"
 #include "EngineerGeometryToolsComponent.h"
 #include "EngineerLibraryComponent.h"
+#include "EngineerLayersComponent.h"
 
 #include <creation/assets/ProjectSession.h>
 #include <creation/assets/ProjectWorkspaceService.h>
 #include <creation/suite/SuiteSettings.h>
 
 class MainComponent final : public juce::Component,
-                            private juce::MenuBarModel
+                            private juce::MenuBarModel,
+                            private EngineerSceneModel::Listener
 {
 public:
     MainComponent();
@@ -46,6 +48,7 @@ private:
     void initialiseDockingWorkspace();
     void toggleDockPanel(const juce::String& panelId, CreationDock::DockTargetZone fallbackZone);
     void onUserSpecLibraryChanged();
+    void engineerSceneModelChanged() override;
 
     std::unique_ptr<juce::MenuBarComponent> menuBar_;
     std::unique_ptr<CreationDock::DockManager> dockManager_;
@@ -77,6 +80,7 @@ private:
     EngineerGeometryElementsComponent geometryElementsPanel_;
     EngineerGeometryToolsComponent geometryToolsPanel_;
     EngineerLibraryComponent libraryPanel_;
+    EngineerLayersComponent layersPanel_;
     EngineerViewportComponent viewportDesign3D_;
     EngineerViewportComponent viewportAssemblyFloor_;
     EngineerViewportComponent viewportPlanarElectronics_;
