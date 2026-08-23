@@ -45,4 +45,25 @@ juce::String formatLengthMeters(float meters)
 {
     return juce::String(meters, 3);
 }
+
+float parseDegrees(const juce::String& text, float fallbackDegrees)
+{
+    const auto trimmed = text.trim();
+    if (trimmed.isEmpty())
+        return fallbackDegrees;
+
+    // getFloatValue() itself already returns 0 for genuinely unparseable
+    // text (no leading digit at all) rather than signalling failure, so a
+    // deliberately-typed "0" and an accidental empty-after-trim both need
+    // the same fallback -- checked above -- but anything with at least a
+    // leading digit/sign is trusted to getFloatValue() directly, same as
+    // every plain-float editor elsewhere in this app before unit-aware
+    // parsing existed.
+    return trimmed.getFloatValue();
+}
+
+juce::String formatDegrees(float degrees)
+{
+    return juce::String(degrees, 2);
+}
 }

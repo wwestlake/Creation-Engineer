@@ -80,6 +80,21 @@ EngineerLibraryComponent::EngineerLibraryComponent(EngineerSceneModel& sceneMode
     placeConnectorButton_.onClick = [this] { placeSelectedConnector(); };
     addAndMakeVisible(placeConnectorButton_);
 
+    configureButton(placeConnectorAlignedButton_);
+    placeConnectorAlignedButton_.onClick = [this] { placeSelectedConnectorAlignedToSelection(); };
+    addAndMakeVisible(placeConnectorAlignedButton_);
+
+    configureButton(snapToRailButton_);
+    snapToRailButton_.onClick = [this] { snapSelectedConnectorToSelectedRail(); };
+    addAndMakeVisible(snapToRailButton_);
+
+    customPartBox_.setTextWhenNoChoicesAvailable("No custom parts yet");
+    addAndMakeVisible(customPartBox_);
+
+    configureButton(placeCustomPartButton_);
+    placeCustomPartButton_.onClick = [this] { placeSelectedCustomPart(); };
+    addAndMakeVisible(placeCustomPartButton_);
+
     configureButton(addEntryToggleButton_);
     addEntryToggleButton_.onClick = [this] { toggleAddEntryForm(); };
     addAndMakeVisible(addEntryToggleButton_);
@@ -151,6 +166,16 @@ void EngineerLibraryComponent::resized()
     connectorBox_.setBounds(connectorRow.removeFromLeft(connectorRow.getWidth() * 2 / 3));
     area.removeFromTop(8);
     placeConnectorButton_.setBounds(area.removeFromTop(28));
+    area.removeFromTop(8);
+    placeConnectorAlignedButton_.setBounds(area.removeFromTop(28));
+    area.removeFromTop(8);
+    snapToRailButton_.setBounds(area.removeFromTop(28));
+    area.removeFromTop(14);
+
+    auto customPartRow = area.removeFromTop(26);
+    customPartBox_.setBounds(customPartRow.removeFromLeft(customPartRow.getWidth() * 2 / 3));
+    area.removeFromTop(8);
+    placeCustomPartButton_.setBounds(area.removeFromTop(28));
     area.removeFromTop(14);
 
     addEntryToggleButton_.setBounds(area.removeFromTop(28));
@@ -255,6 +280,15 @@ void EngineerLibraryComponent::refreshLists()
     }
     if (connectorBox_.getNumItems() > 0)
         connectorBox_.setSelectedItemIndex(0, juce::dontSendNotification);
+
+    customPartBox_.clear(juce::dontSendNotification);
+    for (int i = 0; i < static_cast<int>(browseLibrary_.customParts.size()); ++i)
+    {
+        const auto& part = browseLibrary_.customParts[static_cast<size_t>(i)];
+        customPartBox_.addItem(part.displayName, i + 1);
+    }
+    if (customPartBox_.getNumItems() > 0)
+        customPartBox_.setSelectedItemIndex(0, juce::dontSendNotification);
 }
 
 void EngineerLibraryComponent::refreshMaterialBox()
@@ -297,6 +331,100 @@ void EngineerLibraryComponent::placeSelectedConnector()
     const juce::Vector3D<float> size { connector.sizeMmX / 1000.0f, connector.sizeMmY / 1000.0f,
                                        connector.sizeMmZ / 1000.0f };
     sceneModel_.addConnectorObject(connector.id, size);
+}
+
+void EngineerLibraryComponent::placeSelectedConnectorAlignedToSelection()
+{
+    // Read before placing -- addConnectorObject below re-selects the new
+    // connector (see EngineerSceneModel::addConnectorObject), so the
+    // rotation to copy has to be captured first.
+    const auto rotationToCopy = sceneModel_.getSelectedObjectRotationDegrees();
+    placeSelectedConnector();
+    sceneModel_.setSelectedObjectRotationDegrees(rotationToCopy);
+}
+
+// Places the connectorBox_ selection as a new DIN module flush against the
+// current far end of whatever's already mounted on the selected rail --
+// finds that far end by scanning already-mounted modules and taking the max
+// of their actual current positions (projected onto the rail's world-space
+// length axis), not by summing nominal widths in insertion order: a running
+// sum silently breaks once any middle module is deleted (an accepted v1 gap
+// -- gaps are left, not auto-closed), since the sum would under-count and
+// the next placement would land before the true end of the strip, overlapping
+// a module sitting beyond the gap. Reading ground-truth positions is
+// self-correcting regardless of deletion/insertion order.
+void EngineerLibraryComponent::snapSelectedConnectorToSelectedRail()
+{
+    const auto connectorIndex = connectorBox_.getSelectedItemIndex();
+    if (connectorIndex < 0 || connectorIndex >= static_cast<int>(browseLibrary_.connectors.size()))
+        return;
+    const auto& connector = browseLibrary_.connectors[static_cast<size_t>(connectorIndex)];
+
+    const auto& rail = sceneModel_.getSelectedObject();
+    if (!rail.libraryPart.has_value())
+        return;
+    const auto* railProfile = browseLibrary_.findProfile(rail.libraryPart->profileId);
+    if (railProfile == nullptr || railProfile->kind != creation::engineering::ProfileKind::dinRailTopHat)
+        return;
+
+    // Rail's world-space length axis: Matrix3D<float>::rotation's column-
+    // major layout means "R applied to local +Y" is exactly its 2nd column.
+    const juce::Vector3D<float> rotationRadians { juce::degreesToRadians(rail.rotationDegrees.x),
+                                                  juce::degreesToRadians(rail.rotationDegrees.y),
+                                                  juce::degreesToRadians(rail.rotationDegrees.z) };
+    const auto railRotation = juce::Matrix3D<float>::rotation(rotationRadians);
+    const juce::Vector3D<float> lengthAxis { railRotation.mat[4], railRotation.mat[5], railRotation.mat[6] };
+
+    // rail.size.y stays synced to the live LibraryPartState::lengthMeters
+    // (see EngineerSceneModel::setSelectedLibraryPartLength), so no
+    // ProfileSpec re-lookup needed for the rail's own length.
+    const auto railHalfLength = rail.size.y * 0.5f;
+    float currentStripEndLocalY = -railHalfLength;
+    for (const auto& object : sceneModel_.getObjects())
+    {
+        if (object.mountedOnObjectId != rail.objectId)
+            continue;
+
+        const float dx = object.position.x - rail.position.x;
+        const float dy = object.position.y - rail.position.y;
+        const float dz = object.position.z - rail.position.z;
+        const float localY = dx * lengthAxis.x + dy * lengthAxis.y + dz * lengthAxis.z; // projection onto a unit axis
+        currentStripEndLocalY = juce::jmax(currentStripEndLocalY, localY + object.size.y * 0.5f);
+    }
+
+    const auto newModuleWidthMeters = connector.sizeMmY / 1000.0f; // along-rail axis -- see ConnectorSpec.h
+    const auto newLocalY = currentStripEndLocalY + newModuleWidthMeters * 0.5f;
+    const juce::Vector3D<float> newPosition { rail.position.x + lengthAxis.x * newLocalY,
+                                              rail.position.y + lengthAxis.y * newLocalY,
+                                              rail.position.z + lengthAxis.z * newLocalY };
+
+    const juce::Vector3D<float> size { connector.sizeMmX / 1000.0f, connector.sizeMmY / 1000.0f,
+                                       connector.sizeMmZ / 1000.0f };
+    sceneModel_.addConnectorObjectMountedOnRail(connector.id, size, rail.objectId, newPosition, rail.rotationDegrees);
+}
+
+void EngineerLibraryComponent::placeSelectedCustomPart()
+{
+    const auto partIndex = customPartBox_.getSelectedItemIndex();
+    if (partIndex < 0 || partIndex >= static_cast<int>(browseLibrary_.customParts.size()))
+        return;
+
+    const auto& part = browseLibrary_.customParts[static_cast<size_t>(partIndex)];
+    if (part.boundaryUV.empty())
+        return;
+
+    auto minimum = part.boundaryUV.front();
+    auto maximum = part.boundaryUV.front();
+    for (const auto& p : part.boundaryUV)
+    {
+        minimum.x = juce::jmin(minimum.x, p.x);
+        minimum.y = juce::jmin(minimum.y, p.y);
+        maximum.x = juce::jmax(maximum.x, p.x);
+        maximum.y = juce::jmax(maximum.y, p.y);
+    }
+
+    const juce::Vector3D<float> size { maximum.x - minimum.x, maximum.y - minimum.y, part.thicknessMeters };
+    sceneModel_.addCustomPartObject(part.id, size);
 }
 
 void EngineerLibraryComponent::toggleAddEntryForm()

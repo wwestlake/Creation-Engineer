@@ -124,8 +124,11 @@ juce::var sceneObjectToVar(const EngineerSceneModel::SceneObject& object)
     root->setProperty("authoringState", authoringStateToken(object.authoringState));
     root->setProperty("objectId", object.objectId);
     root->setProperty("connectorId", object.connectorId);
+    root->setProperty("customPartId", object.customPartId);
     root->setProperty("layerId", object.layerId);
     root->setProperty("selectedVertexIndex", object.selectedVertexIndex);
+    root->setProperty("rotation", vector3ToVar(object.rotationDegrees));
+    root->setProperty("mountedOnObjectId", object.mountedOnObjectId);
 
     juce::Array<juce::var> modifiersVar;
     for (const auto& modifier : object.modifiers)
@@ -158,10 +161,25 @@ bool sceneObjectFromVar(const juce::var& value, EngineerSceneModel::SceneObject&
     outObject.authoringState = authoringStateFromToken(root->getProperty("authoringState").toString());
     outObject.objectId = static_cast<int>(root->getProperty("objectId"));
     outObject.connectorId = root->getProperty("connectorId").toString();
+    outObject.customPartId = root->getProperty("customPartId").toString();
     outObject.layerId = root->getProperty("layerId").toString();
     if (outObject.layerId.isEmpty())
         outObject.layerId = "layer:default";
     outObject.selectedVertexIndex = static_cast<int>(root->getProperty("selectedVertexIndex"));
+    // Missing on a schema-1 file -- vector3FromVar returns false and leaves
+    // rotationDegrees at its default-constructed {0,0,0}, exactly the
+    // desired "old files have no rotation" behavior.
+    vector3FromVar(root->getProperty("rotation"), outObject.rotationDegrees);
+
+    // Deliberately NOT the bare-cast pattern selectedVertexIndex uses above
+    // -- a missing property there defaults to 0 harmlessly, but 0 is a real,
+    // legitimate objectId here, so a schema-<3 file (which never wrote this
+    // property at all) must explicitly default to the -1 "unmounted"
+    // sentinel, not silently read as "mounted on object 0."
+    if (const auto mountedVar = root->getProperty("mountedOnObjectId"); !mountedVar.isVoid())
+        outObject.mountedOnObjectId = static_cast<int>(mountedVar);
+    else
+        outObject.mountedOnObjectId = -1;
 
     outObject.modifiers.clear();
     if (const auto* modifiersArray = root->getProperty("modifiers").getArray())
@@ -227,6 +245,7 @@ juce::var toVar(const EngineerSceneModel& model)
     root->setProperty("selectedObjectIndex", model.getSelectedObjectIndex());
     root->setProperty("nextObjectId", model.getNextObjectIdForSerialization());
     root->setProperty("cameraPreset", cameraPresetToken(model.getCameraPreset()));
+    root->setProperty("cursorPosition", vector3ToVar(model.getCursorPosition()));
 
     juce::Array<juce::var> objectsVar;
     for (const auto& object : model.getObjects())
@@ -280,7 +299,11 @@ bool fromVar(const juce::var& value, EngineerSceneModel& model, juce::String& er
     const auto nextObjectId = static_cast<int>(root->getProperty("nextObjectId"));
     const auto cameraPreset = cameraPresetFromToken(root->getProperty("cameraPreset").toString());
 
-    model.loadDrawing(std::move(objects), std::move(layers), selectedObjectIndex, nextObjectId, cameraPreset);
+    juce::Vector3D<float> cursorPosition; // missing on a schema-1 file -> stays {0,0,0}
+    vector3FromVar(root->getProperty("cursorPosition"), cursorPosition);
+
+    model.loadDrawing(std::move(objects), std::move(layers), selectedObjectIndex, nextObjectId, cameraPreset,
+                      cursorPosition);
     return true;
 }
 }

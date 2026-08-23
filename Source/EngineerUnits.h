@@ -21,4 +21,12 @@ float parseLengthMeters(const juce::String& text, float fallbackMeters);
 // dimension field in this app already used before unit-aware input existed;
 // this just centralizes it in one place.
 juce::String formatLengthMeters(float meters);
+
+// Plain degrees, no unit suffix to resolve (unlike lengths, a rotation
+// value is unambiguous) -- kept as its own small pair rather than reusing
+// TextEditor::getFloatValue() directly so a bad/empty rotation field falls
+// back to the current value, same contract every other dimension field in
+// this app already has via parseLengthMeters above.
+float parseDegrees(const juce::String& text, float fallbackDegrees);
+juce::String formatDegrees(float degrees);
 }

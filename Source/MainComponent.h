@@ -17,6 +17,7 @@
 #include "EngineerGeometryToolsComponent.h"
 #include "EngineerLibraryComponent.h"
 #include "EngineerLayersComponent.h"
+#include "EngineerSketchComponent.h"
 
 #include <creation/assets/ProjectSession.h>
 #include <creation/assets/ProjectWorkspaceService.h>
@@ -81,6 +82,7 @@ private:
     EngineerGeometryToolsComponent geometryToolsPanel_;
     EngineerLibraryComponent libraryPanel_;
     EngineerLayersComponent layersPanel_;
+    EngineerSketchComponent sketchPanel_;
     EngineerViewportComponent viewportDesign3D_;
     EngineerViewportComponent viewportAssemblyFloor_;
     EngineerViewportComponent viewportPlanarElectronics_;

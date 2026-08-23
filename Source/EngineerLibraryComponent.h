@@ -38,6 +38,9 @@ private:
     void refreshMaterialBox();
     void placeSelectedProfile();
     void placeSelectedConnector();
+    void placeSelectedConnectorAlignedToSelection();
+    void snapSelectedConnectorToSelectedRail();
+    void placeSelectedCustomPart();
     void toggleAddEntryForm();
     void saveNewEntry();
 
@@ -57,6 +60,22 @@ private:
 
     juce::ComboBox connectorBox_;
     juce::TextButton placeConnectorButton_ { "Place Connector" };
+    // v1 assembly convenience (see the T-slot-assembly plan's Part Q): copies
+    // the currently-selected object's rotation onto a newly-placed connector,
+    // so a bracket starts oriented to match the rail it's meant to attach
+    // to instead of always spawning at identity rotation. No snapping/
+    // constraint solving -- the user still fine-tunes manually afterward.
+    juce::TextButton placeConnectorAlignedButton_ { "Place Aligned To Selection" };
+    // Places the connectorBox_ selection as a new DIN module snapped flush
+    // against the end of whatever's already mounted on the currently-
+    // selected DIN rail (a LibraryPart whose ProfileSpec::kind ==
+    // dinRailTopHat) -- see snapSelectedConnectorToSelectedRail. A no-op
+    // (not disabled) if the selection isn't a DIN rail, same click-time-
+    // guard convention every other placement button in this component uses.
+    juce::TextButton snapToRailButton_ { "Snap To Selected Rail" };
+
+    juce::ComboBox customPartBox_;
+    juce::TextButton placeCustomPartButton_ { "Place Custom Part" };
 
     juce::TextButton addEntryToggleButton_ { "New Library Entry" };
     bool addEntryFormVisible_ = false;

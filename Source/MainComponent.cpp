@@ -36,6 +36,7 @@ const juce::String panelIdGeometryElements = "geometryElements";
 const juce::String panelIdGeometryTools = "geometryTools";
 const juce::String panelIdLibrary = "library";
 const juce::String panelIdLayers = "layers";
+const juce::String panelIdSketch = "sketch";
 
 constexpr int menuIdPanelNavigator = 3001;
 constexpr int menuIdPanelViewportDesign3D = 3002;
@@ -49,6 +50,7 @@ constexpr int menuIdPanelViewportPlanarElectronics = 3009;
 constexpr int menuIdPanelLibrary = 3010;
 constexpr int menuIdPanelLayers = 3011;
 constexpr int menuIdSaveDrawing = 3012;
+constexpr int menuIdPanelSketch = 3013;
 
 constexpr const char* kEngineerDrawingEntryPath = "Project/engineer-drawing.json";
 }
@@ -61,6 +63,7 @@ MainComponent::MainComponent()
       geometryToolsPanel_(sceneModel_),
       libraryPanel_(sceneModel_, combinedSpecLibrary_, userSpecLibrary_, [this] { onUserSpecLibraryChanged(); }),
       layersPanel_(sceneModel_),
+      sketchPanel_(sceneModel_, userSpecLibrary_, [this] { onUserSpecLibraryChanged(); }),
       viewportDesign3D_(sceneModel_, EngineerViewportComponent::ViewMode::design3D, combinedSpecLibrary_),
       viewportAssemblyFloor_(sceneModel_, EngineerViewportComponent::ViewMode::assemblyFloor, combinedSpecLibrary_),
       viewportPlanarElectronics_(sceneModel_, EngineerViewportComponent::ViewMode::planarElectronics, combinedSpecLibrary_) {
@@ -201,6 +204,7 @@ juce::PopupMenu MainComponent::getMenuForIndex(int topLevelMenuIndex, const juce
     menu.addItem(menuIdPanelGeometryTools, "Geometry Tools", true, isOpen(panelIdGeometryTools));
     menu.addItem(menuIdPanelLibrary, "Part Library", true, isOpen(panelIdLibrary));
     menu.addItem(menuIdPanelLayers, "Layers", true, isOpen(panelIdLayers));
+    menu.addItem(menuIdPanelSketch, "Sketch", true, isOpen(panelIdSketch));
     menu.addSeparator();
     menu.addItem(menuIdResetLayout, "Reset Dock Layout");
     return menu;
@@ -218,6 +222,7 @@ void MainComponent::menuItemSelected(int menuItemID, int) {
         case menuIdPanelGeometryTools:    toggleDockPanel(panelIdGeometryTools, CreationDock::DockTargetZone::Bottom); break;
         case menuIdPanelLibrary:          toggleDockPanel(panelIdLibrary, CreationDock::DockTargetZone::Left); break;
         case menuIdPanelLayers:           toggleDockPanel(panelIdLayers, CreationDock::DockTargetZone::Right); break;
+        case menuIdPanelSketch:           toggleDockPanel(panelIdSketch, CreationDock::DockTargetZone::Bottom); break;
         case menuIdResetLayout:           if (dockManager_ != nullptr) dockManager_->resetLayout(); break;
         case menuIdSaveDrawing:           saveSessionToDisk(true); break;
         default: break;
@@ -250,8 +255,10 @@ void MainComponent::initialiseDockingWorkspace() {
         std::make_unique<NonOwningPanelHost>(libraryPanel_), CreationDock::DockTargetZone::Left);
     dockManager_->registerPanel(panelIdLayers, "Layers",
         std::make_unique<NonOwningPanelHost>(layersPanel_), CreationDock::DockTargetZone::Right);
+    dockManager_->registerPanel(panelIdSketch, "Sketch",
+        std::make_unique<NonOwningPanelHost>(sketchPanel_), CreationDock::DockTargetZone::Bottom);
 
-    // All ten start open -- a small, cohesive panel set with no reason to
+    // All eleven start open -- a small, cohesive panel set with no reason to
     // hide any of them by default (unlike Engine's decision to close its
     // less-used modes/placeholders). All three viewports share the centre
     // tab group, same as the single viewport used to occupy -- dragging any

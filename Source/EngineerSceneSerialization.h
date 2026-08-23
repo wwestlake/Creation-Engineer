@@ -12,7 +12,15 @@
 // loadDrawing) so the model itself still controls every state change.
 namespace EngineerSceneSerialization
 {
-constexpr int kSchemaVersion = 1;
+// v2 (Phase 4) adds SceneObject::rotationDegrees/customPartId and the
+// drawing-root cursorPosition -- all three default cleanly when absent (a
+// missing juce::var property reads as 0/empty), so schema-1 files load with
+// no explicit migration code, just this version bump.
+// v3 (Phase 5) adds SceneObject::mountedOnObjectId -- unlike every other
+// field added in the v1->v2 bump, this one must NOT rely on "missing var
+// reads as 0" (0 is a real, legitimate objectId); see sceneObjectFromVar's
+// explicit isVoid() check.
+constexpr int kSchemaVersion = 3;
 
 juce::var toVar(const EngineerSceneModel& model);
 

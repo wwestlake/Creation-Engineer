@@ -23,6 +23,21 @@ EngineerPropertiesComponent::EngineerPropertiesComponent(EngineerSceneModel& mod
 {
     sceneModel.addListener(this);
 
+    configureCaption(cursorLabel, "Placement Cursor (m)");
+    addAndMakeVisible(cursorLabel);
+    configureEditor(cursorXEditor);
+    configureEditor(cursorYEditor);
+    configureEditor(cursorZEditor);
+    cursorXEditor.onFocusLost = [this] { commitCursorPosition(); };
+    cursorXEditor.onReturnKey = [this] { commitCursorPosition(); };
+    cursorYEditor.onFocusLost = [this] { commitCursorPosition(); };
+    cursorYEditor.onReturnKey = [this] { commitCursorPosition(); };
+    cursorZEditor.onFocusLost = [this] { commitCursorPosition(); };
+    cursorZEditor.onReturnKey = [this] { commitCursorPosition(); };
+    addAndMakeVisible(cursorXEditor);
+    addAndMakeVisible(cursorYEditor);
+    addAndMakeVisible(cursorZEditor);
+
     titleLabel.setText("Selected Object", juce::dontSendNotification);
     titleLabel.setColour(juce::Label::textColourId, juce::Colours::white);
     titleLabel.setFont(juce::Font(18.0f).boldened());
@@ -36,6 +51,7 @@ EngineerPropertiesComponent::EngineerPropertiesComponent(EngineerSceneModel& mod
     configureCaption(primitiveLabel, "Primitive");
     configureCaption(positionLabel, "Position (m)");
     configureCaption(sizeLabel, "Size (m)");
+    configureCaption(rotationLabel, "Rotation (deg)");
     configureCaption(authoringStateLabel, "Authoring State");
     configureCaption(modifierLabel, "Modifier Stack");
     configureCaption(layerLabel, "Layer");
@@ -47,6 +63,7 @@ EngineerPropertiesComponent::EngineerPropertiesComponent(EngineerSceneModel& mod
     addAndMakeVisible(primitiveLabel);
     addAndMakeVisible(positionLabel);
     addAndMakeVisible(sizeLabel);
+    addChildComponent(rotationLabel);
     addAndMakeVisible(authoringStateLabel);
     addAndMakeVisible(authoringStateValue);
     addAndMakeVisible(modifierLabel);
@@ -61,6 +78,9 @@ EngineerPropertiesComponent::EngineerPropertiesComponent(EngineerSceneModel& mod
     configureEditor(sizeXEditor);
     configureEditor(sizeYEditor);
     configureEditor(sizeZEditor);
+    configureEditor(rotXEditor);
+    configureEditor(rotYEditor);
+    configureEditor(rotZEditor);
 
     primitiveBox.addItem("Block", 1);
     primitiveBox.addItem("Cylinder", 2);
@@ -75,6 +95,9 @@ EngineerPropertiesComponent::EngineerPropertiesComponent(EngineerSceneModel& mod
     sizeXEditor.onFocusLost = [this] { commitSize(); };
     sizeYEditor.onFocusLost = [this] { commitSize(); };
     sizeZEditor.onFocusLost = [this] { commitSize(); };
+    rotXEditor.onFocusLost = [this] { commitRotation(); };
+    rotYEditor.onFocusLost = [this] { commitRotation(); };
+    rotZEditor.onFocusLost = [this] { commitRotation(); };
     mirrorXToggle.onClick = [this] { commitMirrorState(); };
     commitGeometryButton.onClick = [this] { commitDirectGeometry(); };
     restorePrimitiveButton.onClick = [this] { restorePrimitiveWorkflow(); };
@@ -103,6 +126,9 @@ EngineerPropertiesComponent::EngineerPropertiesComponent(EngineerSceneModel& mod
     addAndMakeVisible(sizeXEditor);
     addAndMakeVisible(sizeYEditor);
     addAndMakeVisible(sizeZEditor);
+    addChildComponent(rotXEditor);
+    addChildComponent(rotYEditor);
+    addChildComponent(rotZEditor);
     addAndMakeVisible(mirrorXToggle);
     addAndMakeVisible(commitGeometryButton);
     addAndMakeVisible(restorePrimitiveButton);
@@ -127,6 +153,17 @@ void EngineerPropertiesComponent::paint(juce::Graphics& g)
 void EngineerPropertiesComponent::resized()
 {
     auto area = getLocalBounds().reduced(12);
+
+    cursorLabel.setBounds(area.removeFromTop(18));
+    auto cursorRow = area.removeFromTop(26);
+    const auto cursorFieldWidth = (cursorRow.getWidth() - 16) / 3;
+    cursorXEditor.setBounds(cursorRow.removeFromLeft(cursorFieldWidth));
+    cursorRow.removeFromLeft(8);
+    cursorYEditor.setBounds(cursorRow.removeFromLeft(cursorFieldWidth));
+    cursorRow.removeFromLeft(8);
+    cursorZEditor.setBounds(cursorRow);
+    area.removeFromTop(12);
+
     titleLabel.setBounds(area.removeFromTop(24));
     hintLabel.setBounds(area.removeFromTop(22));
     area.removeFromTop(10);
@@ -157,6 +194,16 @@ void EngineerPropertiesComponent::resized()
     sizeYEditor.setBounds(sizeRow.removeFromLeft(sizeFieldWidth));
     sizeRow.removeFromLeft(8);
     sizeZEditor.setBounds(sizeRow);
+    area.removeFromTop(8);
+
+    rotationLabel.setBounds(area.removeFromTop(18));
+    auto rotRow = area.removeFromTop(26);
+    const auto rotFieldWidth = (rotRow.getWidth() - 16) / 3;
+    rotXEditor.setBounds(rotRow.removeFromLeft(rotFieldWidth));
+    rotRow.removeFromLeft(8);
+    rotYEditor.setBounds(rotRow.removeFromLeft(rotFieldWidth));
+    rotRow.removeFromLeft(8);
+    rotZEditor.setBounds(rotRow);
     area.removeFromTop(10);
 
     authoringStateLabel.setBounds(area.removeFromTop(18));
@@ -193,6 +240,11 @@ void EngineerPropertiesComponent::engineerSceneModelChanged()
 
 void EngineerPropertiesComponent::refreshFromScene()
 {
+    const auto cursorPosition = sceneModel.getCursorPosition();
+    cursorXEditor.setText(EngineerUnits::formatLengthMeters(cursorPosition.x), juce::dontSendNotification);
+    cursorYEditor.setText(EngineerUnits::formatLengthMeters(cursorPosition.y), juce::dontSendNotification);
+    cursorZEditor.setText(EngineerUnits::formatLengthMeters(cursorPosition.z), juce::dontSendNotification);
+
     const auto& object = sceneModel.getSelectedObject();
     nameEditor.setText(object.name, juce::dontSendNotification);
     primitiveBox.setText(object.primitiveType, juce::dontSendNotification);
@@ -202,6 +254,18 @@ void EngineerPropertiesComponent::refreshFromScene()
     sizeXEditor.setText(EngineerUnits::formatLengthMeters(object.size.x), juce::dontSendNotification);
     sizeYEditor.setText(EngineerUnits::formatLengthMeters(object.size.y), juce::dontSendNotification);
     sizeZEditor.setText(EngineerUnits::formatLengthMeters(object.size.z), juce::dontSendNotification);
+    const auto rotatable = sceneModel.isSelectedObjectRotatable();
+    rotationLabel.setVisible(rotatable);
+    rotXEditor.setVisible(rotatable);
+    rotYEditor.setVisible(rotatable);
+    rotZEditor.setVisible(rotatable);
+    if (rotatable)
+    {
+        rotXEditor.setText(EngineerUnits::formatDegrees(object.rotationDegrees.x), juce::dontSendNotification);
+        rotYEditor.setText(EngineerUnits::formatDegrees(object.rotationDegrees.y), juce::dontSendNotification);
+        rotZEditor.setText(EngineerUnits::formatDegrees(object.rotationDegrees.z), juce::dontSendNotification);
+    }
+
     authoringStateValue.setText(EngineerSceneModel::toDisplayString(object.authoringState), juce::dontSendNotification);
     mirrorXToggle.setToggleState(object.mirrorXEnabled, juce::dontSendNotification);
     mirrorXToggle.setEnabled(object.authoringState != EngineerSceneModel::AuthoringState::directGeometry);
@@ -260,6 +324,22 @@ void EngineerPropertiesComponent::commitSize()
     sceneModel.setSelectedObjectSize({ juce::jmax(0.05f, EngineerUnits::parseLengthMeters(sizeXEditor.getText(), current.x)),
                                        juce::jmax(0.05f, EngineerUnits::parseLengthMeters(sizeYEditor.getText(), current.y)),
                                        juce::jmax(0.05f, EngineerUnits::parseLengthMeters(sizeZEditor.getText(), current.z)) });
+}
+
+void EngineerPropertiesComponent::commitRotation()
+{
+    const auto& current = sceneModel.getSelectedObject().rotationDegrees;
+    sceneModel.setSelectedObjectRotationDegrees({ EngineerUnits::parseDegrees(rotXEditor.getText(), current.x),
+                                                  EngineerUnits::parseDegrees(rotYEditor.getText(), current.y),
+                                                  EngineerUnits::parseDegrees(rotZEditor.getText(), current.z) });
+}
+
+void EngineerPropertiesComponent::commitCursorPosition()
+{
+    const auto current = sceneModel.getCursorPosition();
+    sceneModel.setCursorPosition({ EngineerUnits::parseLengthMeters(cursorXEditor.getText(), current.x),
+                                   EngineerUnits::parseLengthMeters(cursorYEditor.getText(), current.y),
+                                   EngineerUnits::parseLengthMeters(cursorZEditor.getText(), current.z) });
 }
 
 void EngineerPropertiesComponent::commitMirrorState()

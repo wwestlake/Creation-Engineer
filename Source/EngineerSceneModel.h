@@ -25,12 +25,27 @@ public:
     // Object Mode: select/move whole objects (today's default behavior).
     // Vertex Mode: select/drag individual vertices of the selected object's
     // real editable vertex cage (only meaningful for directGeometry objects
-    // -- see SceneObject::editableVertices). One mode applies across all
-    // three viewports at once, not per-viewport.
+    // -- see SceneObject::editableVertices). Sketch Mode: place boundary
+    // points/holes for an in-progress ActiveSketch (see beginSketch). One
+    // mode applies across all three viewports at once, not per-viewport.
     enum class EditMode
     {
         object,
-        vertex
+        vertex,
+        sketch
+    };
+
+    // One of the 3 principal planes through an ActiveSketch's origin point
+    // -- a face-picked arbitrary plane is future work (see the sketch-
+    // modeling plan's Part O). Purely a click-to-(u,v) mapping choice; the
+    // generated solid is always built in a fixed local (X=u,Y=v,Z=thickness)
+    // frame regardless of which plane was used to author it -- see
+    // ce::GenerateExtrudedPolygonWithHoles's own doc comment.
+    enum class SketchPlane
+    {
+        xy,
+        xz,
+        yz
     };
 
     enum class AuthoringState
@@ -66,6 +81,32 @@ public:
         bool visible = true;
         juce::Colour tint = juce::Colours::white;
         float opacity = 1.0f;
+    };
+
+    struct SketchHole
+    {
+        juce::Point<float> centerUV;   // meters, in the sketch plane's own 2D frame
+        float diameterMeters = 0.005f; // 5mm default, immediately editable
+    };
+
+    // In-progress sketch state (Sketch Mode) -- lives here rather than on
+    // EngineerViewportComponent because a user sketching in one docked
+    // viewport instance needs their points visible identically if another
+    // instance is docked open too, same reasoning as EditMode/cursorPosition_
+    // itself. Boundary is straight-line-segments only (closed implicitly,
+    // last point connects to first); holes are circular only -- arcs/
+    // splines/non-circular holes are future work.
+    struct ActiveSketch
+    {
+        bool active = false;
+        SketchPlane plane = SketchPlane::xz;
+        juce::Vector3D<float> origin;                   // world-space plane origin, snapshotted from cursorPosition_ at beginSketch()
+        std::vector<juce::Point<float>> boundaryPoints;  // ordered u,v meters
+        std::vector<SketchHole> holes;
+        float thicknessMeters = 0.003f;                  // 3mm default
+        bool holePlacementActive = false;                // toggles what a sketch-mode viewport click adds
+        int selectedBoundaryPointIndex = -1;
+        int selectedHoleIndex = -1;
     };
 
     // Real 3D, Y-up, scene units (meters) -- matches shared/Render's Camera/
@@ -106,6 +147,21 @@ public:
         // proxy system.
         std::vector<juce::Vector3D<float>> editableVertices;
         int selectedVertexIndex = -1;
+
+        // Euler XYZ, degrees. Inert (see isSelectedObjectRotatable) once
+        // editableVertices is non-empty -- a directGeometry object's
+        // orientation always comes from its vertex cage, never this field,
+        // so the two can never disagree about which way the object faces.
+        juce::Vector3D<float> rotationDegrees;
+        juce::String customPartId; // non-empty only when primitiveType == "CustomPart"
+
+        // objectId (SceneObject::objectId) of the DIN rail this object is
+        // mounted on, or -1 if not mounted on anything -- same "-1 sentinel
+        // for none" convention as selectedVertexIndex above. Set once at
+        // placement time by addConnectorObjectMountedOnRail and never
+        // updated afterward: if the rail is later moved/rotated, mounted
+        // modules do NOT follow it (no parent-child transform propagation).
+        int mountedOnObjectId = -1;
     };
 
     enum class CameraPreset
@@ -131,6 +187,16 @@ public:
     void setSelectedObjectPrimitiveType(const juce::String& primitiveType);
     void setSelectedObjectPosition(juce::Vector3D<float> position);
     void setSelectedObjectSize(juce::Vector3D<float> size);
+    // No-op when the selected object has a real editable vertex cage
+    // (editableVertices non-empty) -- see isSelectedObjectRotatable's doc
+    // comment and SceneObject::rotationDegrees.
+    void setSelectedObjectRotationDegrees(juce::Vector3D<float> rotationDegrees);
+    juce::Vector3D<float> getSelectedObjectRotationDegrees() const noexcept;
+    // False once the selected object has a real editable vertex cage --
+    // directGeometry objects always orient via their cage, never via
+    // rotationDegrees, so the rotation UI/field is gated off for them
+    // rather than risk two disagreeing sources of orientation truth.
+    bool isSelectedObjectRotatable() const noexcept;
     void setSelectedObjectMirrorXEnabled(bool enabled);
     bool isSelectedObjectMirrorXEnabled() const noexcept;
     AuthoringState getSelectedObjectAuthoringState() const noexcept;
@@ -153,6 +219,27 @@ public:
     // size is likewise computed by the caller (from ConnectorSpec) -- v1
     // connectors are placed as-is, not length-parametric or bakeable.
     void addConnectorObject(const juce::String& connectorId, juce::Vector3D<float> size);
+
+    // Same shape as addConnectorObject, except position/rotationDegrees are
+    // supplied explicitly by the caller (EngineerLibraryComponent, via
+    // snapSelectedConnectorToSelectedRail) rather than derived from
+    // cursorPosition_ -- the whole point of snap placement is that position
+    // is computed from the target rail + already-mounted modules, not the
+    // cursor. mountedOnObjectId is recorded for round-tripping and for later
+    // placements to find "what's already on this rail" via getObjects()
+    // filtering; EngineerSceneModel itself never looks up a rail's
+    // ProfileSpec or interprets mountedOnObjectId beyond storing it -- stays
+    // decoupled from shared/EngineeringSpecs, same rule addLibraryPartObject
+    // already follows.
+    void addConnectorObjectMountedOnRail(const juce::String& connectorId, juce::Vector3D<float> size,
+                                         int mountedOnObjectId, juce::Vector3D<float> position,
+                                         juce::Vector3D<float> rotationDegrees);
+
+    // size is computed by the caller from the CustomPartSpec's own boundary
+    // extents/thickness -- same decoupling-from-shared/EngineeringSpecs
+    // rationale as addLibraryPartObject/addConnectorObject above.
+    void addCustomPartObject(const juce::String& customPartId, juce::Vector3D<float> size);
+
     bool canRemoveSelectedObject() const noexcept;
     void removeSelectedObject();
     void addSelectedObjectMirrorModifier();
@@ -183,6 +270,43 @@ public:
     void selectNextVertex() noexcept;
     juce::Vector3D<float> getSelectedVertexPosition() const noexcept;
     void setSelectedVertexPosition(juce::Vector3D<float> worldPosition);
+    // Scene-level (one per drawing, not per-object) placement cursor -- the
+    // insertion point every add*Object entry point spawns at. See EngineerViewportComponent::mouseDown for how a viewport click places it.
+    juce::Vector3D<float> getCursorPosition() const noexcept;
+    void setCursorPosition(juce::Vector3D<float> position);
+
+    // Sketch Mode (see EditMode::sketch). beginSketch snapshots
+    // cursorPosition_ as the new sketch's plane origin. Every exit path
+    // (cancelSketch, endSketch, or an unrelated setEditMode call) converges
+    // on the same activeSketch_ = ActiveSketch{} reset, so a stale
+    // abandoned sketch can never linger.
+    void beginSketch(SketchPlane plane);
+    void cancelSketch();
+    void addSketchBoundaryPoint(juce::Point<float> uv);
+    void removeSketchBoundaryPoint(int index);
+    void setSketchBoundaryPointPosition(int index, juce::Point<float> uv);
+    void setSketchHolePlacementActive(bool active);
+    void addSketchHole(juce::Point<float> centerUV, float diameterMeters);
+    void removeSketchHole(int index);
+    void setSketchHolePosition(int index, juce::Point<float> centerUV);
+    void setSketchHoleDiameter(int index, float diameterMeters);
+    void setSketchThickness(float thicknessMeters);
+    const ActiveSketch& getActiveSketch() const noexcept;
+    bool canFinishActiveSketch() const noexcept; // >= 3 boundary points; self-intersection is not validated
+    // Called by EngineerSketchComponent once it has read the final sketch
+    // data and created/placed the CustomPartSpec -- this only clears
+    // activeSketch_/editMode_, it never touches shared/EngineeringSpecs
+    // itself (see addLibraryPartObject's decoupling comment).
+    void endSketch();
+
+    // Shared by viewport click-mapping and EngineerSketchComponent so
+    // there's exactly one implementation of "how does a plane choice turn a
+    // world point into (u,v)" -- static, no instance state needed.
+    static juce::Vector3D<float> sketchPlaneToWorld(SketchPlane plane, juce::Vector3D<float> origin,
+                                                     juce::Point<float> uv);
+    static juce::Point<float> worldToSketchPlane(SketchPlane plane, juce::Vector3D<float> origin,
+                                                  juce::Vector3D<float> world);
+
     void nudgeSelectedDirectGeometryPosition(juce::Point<float> delta);
     void scaleSelectedDirectGeometry(juce::Point<float> delta);
     void extrudeSelectedDirectGeometry(float amount);
@@ -213,7 +337,8 @@ public:
     // exactly once per load.
     int getNextObjectIdForSerialization() const noexcept;
     void loadDrawing(std::vector<SceneObject> loadedObjects, std::vector<Layer> loadedLayers,
-                     int loadedSelectedObjectIndex, int loadedNextObjectId, CameraPreset loadedCameraPreset);
+                     int loadedSelectedObjectIndex, int loadedNextObjectId, CameraPreset loadedCameraPreset,
+                     juce::Vector3D<float> loadedCursorPosition = {});
 
     void addListener(Listener* listener);
     void removeListener(Listener* listener);
@@ -235,5 +360,7 @@ private:
     EditMode editMode_ = EditMode::object;
     CameraPreset cameraPreset = CameraPreset::iso;
     std::vector<Layer> layers;
+    juce::Vector3D<float> cursorPosition_ { 0.0f, 0.0f, 0.0f };
+    ActiveSketch activeSketch_;
     juce::ListenerList<Listener> listeners;
 };

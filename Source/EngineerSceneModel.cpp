@@ -153,6 +153,26 @@ void EngineerSceneModel::setSelectedObjectSize(juce::Vector3D<float> size)
     notifyListeners();
 }
 
+void EngineerSceneModel::setSelectedObjectRotationDegrees(juce::Vector3D<float> rotationDegrees)
+{
+    auto& object = getSelectedObjectMutable();
+    if (!object.editableVertices.empty())
+        return; // directGeometry objects orient via their vertex cage only -- see the field's own doc comment.
+
+    object.rotationDegrees = rotationDegrees;
+    notifyListeners();
+}
+
+juce::Vector3D<float> EngineerSceneModel::getSelectedObjectRotationDegrees() const noexcept
+{
+    return getSelectedObject().rotationDegrees;
+}
+
+bool EngineerSceneModel::isSelectedObjectRotatable() const noexcept
+{
+    return getSelectedObject().editableVertices.empty();
+}
+
 void EngineerSceneModel::setSelectedObjectMirrorXEnabled(bool enabled)
 {
     auto& object = getSelectedObjectMutable();
@@ -200,12 +220,14 @@ void EngineerSceneModel::addPrimitiveObject(const juce::String& primitiveType)
 {
     const auto baseName = baseNameForPrimitive(primitiveType);
     const auto nextName = makeUniqueObjectName(objects, baseName);
-    const auto offset = static_cast<float>(objects.size()) * 0.6f;
     constexpr float defaultHeight = 0.3f;
 
+    // Spawns at the placement cursor (rests on top of it, same half-height
+    // offset convention every add*Object function uses) rather than a fixed
+    // offset from the origin -- see EngineerSceneModel::setCursorPosition.
     objects.push_back(makeSceneObject(nextName,
                                       primitiveType,
-                                      { offset, defaultHeight * 0.5f, offset * 0.55f },
+                                      { cursorPosition_.x, cursorPosition_.y + defaultHeight * 0.5f, cursorPosition_.z },
                                       { 0.5f, defaultHeight, 0.5f },
                                       false,
                                       {},
@@ -236,7 +258,7 @@ void EngineerSceneModel::addLibraryPartObject(const juce::String& profileId, con
     object.objectId = nextObjectId_++;
     object.name = makeUniqueObjectName(objects, "Library Part");
     object.primitiveType = "LibraryPart";
-    object.position = { 0.0f, initialSize.y * 0.5f, 0.0f };
+    object.position = { cursorPosition_.x, cursorPosition_.y + initialSize.y * 0.5f, cursorPosition_.z };
     object.size = initialSize;
     object.authoringState = AuthoringState::primitive;
     object.libraryPart = LibraryPartState{ profileId, materialId, lengthMeters, false };
@@ -300,10 +322,46 @@ void EngineerSceneModel::addConnectorObject(const juce::String& connectorId, juc
     object.objectId = nextObjectId_++;
     object.name = makeUniqueObjectName(objects, "Connector");
     object.primitiveType = "Connector";
-    object.position = { 0.0f, size.y * 0.5f, 0.0f };
+    object.position = { cursorPosition_.x, cursorPosition_.y + size.y * 0.5f, cursorPosition_.z };
     object.size = size;
     object.authoringState = AuthoringState::primitive;
     object.connectorId = connectorId;
+
+    objects.push_back(object);
+    selectedObjectIndex = static_cast<int>(objects.size()) - 1;
+    notifyListeners();
+}
+
+void EngineerSceneModel::addConnectorObjectMountedOnRail(const juce::String& connectorId, juce::Vector3D<float> size,
+                                                          int mountedOnObjectId, juce::Vector3D<float> position,
+                                                          juce::Vector3D<float> rotationDegrees)
+{
+    SceneObject object;
+    object.objectId = nextObjectId_++;
+    object.name = makeUniqueObjectName(objects, "DIN Module");
+    object.primitiveType = "Connector";
+    object.position = position;
+    object.size = size;
+    object.authoringState = AuthoringState::primitive;
+    object.connectorId = connectorId;
+    object.mountedOnObjectId = mountedOnObjectId;
+    object.rotationDegrees = rotationDegrees;
+
+    objects.push_back(object);
+    selectedObjectIndex = static_cast<int>(objects.size()) - 1;
+    notifyListeners();
+}
+
+void EngineerSceneModel::addCustomPartObject(const juce::String& customPartId, juce::Vector3D<float> size)
+{
+    SceneObject object;
+    object.objectId = nextObjectId_++;
+    object.name = makeUniqueObjectName(objects, "Custom Part");
+    object.primitiveType = "CustomPart";
+    object.position = { cursorPosition_.x, cursorPosition_.y + size.y * 0.5f, cursorPosition_.z };
+    object.size = size;
+    object.authoringState = AuthoringState::primitive;
+    object.customPartId = customPartId;
 
     objects.push_back(object);
     selectedObjectIndex = static_cast<int>(objects.size()) - 1;
@@ -482,8 +540,168 @@ EngineerSceneModel::EditMode EngineerSceneModel::getEditMode() const noexcept
 
 void EngineerSceneModel::setEditMode(EditMode mode) noexcept
 {
+    // Every exit path from Sketch Mode -- an explicit cancel/finish, or just
+    // clicking the Object/Vertex toggle buttons -- converges here, so a
+    // stale, abandoned sketch can never linger once the mode changes away
+    // from it.
+    if (editMode_ == EditMode::sketch && mode != EditMode::sketch)
+        activeSketch_ = ActiveSketch{};
+
     editMode_ = mode;
     notifyListeners();
+}
+
+juce::Vector3D<float> EngineerSceneModel::getCursorPosition() const noexcept
+{
+    return cursorPosition_;
+}
+
+void EngineerSceneModel::setCursorPosition(juce::Vector3D<float> position)
+{
+    cursorPosition_ = position;
+    notifyListeners();
+}
+
+void EngineerSceneModel::beginSketch(SketchPlane plane)
+{
+    activeSketch_ = ActiveSketch{};
+    activeSketch_.active = true;
+    activeSketch_.plane = plane;
+    activeSketch_.origin = cursorPosition_;
+    editMode_ = EditMode::sketch;
+    notifyListeners();
+}
+
+void EngineerSceneModel::cancelSketch()
+{
+    activeSketch_ = ActiveSketch{};
+    editMode_ = EditMode::object;
+    notifyListeners();
+}
+
+void EngineerSceneModel::addSketchBoundaryPoint(juce::Point<float> uv)
+{
+    if (!activeSketch_.active)
+        return;
+
+    activeSketch_.boundaryPoints.push_back(uv);
+    activeSketch_.selectedBoundaryPointIndex = static_cast<int>(activeSketch_.boundaryPoints.size()) - 1;
+    notifyListeners();
+}
+
+void EngineerSceneModel::removeSketchBoundaryPoint(int index)
+{
+    if (index < 0 || index >= static_cast<int>(activeSketch_.boundaryPoints.size()))
+        return;
+
+    activeSketch_.boundaryPoints.erase(activeSketch_.boundaryPoints.begin() + index);
+    activeSketch_.selectedBoundaryPointIndex = juce::jlimit(-1, static_cast<int>(activeSketch_.boundaryPoints.size()) - 1,
+                                                            activeSketch_.selectedBoundaryPointIndex);
+    notifyListeners();
+}
+
+void EngineerSceneModel::setSketchBoundaryPointPosition(int index, juce::Point<float> uv)
+{
+    if (index < 0 || index >= static_cast<int>(activeSketch_.boundaryPoints.size()))
+        return;
+
+    activeSketch_.boundaryPoints[static_cast<size_t>(index)] = uv;
+    notifyListeners();
+}
+
+void EngineerSceneModel::setSketchHolePlacementActive(bool active)
+{
+    activeSketch_.holePlacementActive = active;
+    notifyListeners();
+}
+
+void EngineerSceneModel::addSketchHole(juce::Point<float> centerUV, float diameterMeters)
+{
+    if (!activeSketch_.active)
+        return;
+
+    activeSketch_.holes.push_back({ centerUV, juce::jmax(0.0005f, diameterMeters) });
+    activeSketch_.selectedHoleIndex = static_cast<int>(activeSketch_.holes.size()) - 1;
+    notifyListeners();
+}
+
+void EngineerSceneModel::removeSketchHole(int index)
+{
+    if (index < 0 || index >= static_cast<int>(activeSketch_.holes.size()))
+        return;
+
+    activeSketch_.holes.erase(activeSketch_.holes.begin() + index);
+    activeSketch_.selectedHoleIndex = juce::jlimit(-1, static_cast<int>(activeSketch_.holes.size()) - 1,
+                                                    activeSketch_.selectedHoleIndex);
+    notifyListeners();
+}
+
+void EngineerSceneModel::setSketchHolePosition(int index, juce::Point<float> centerUV)
+{
+    if (index < 0 || index >= static_cast<int>(activeSketch_.holes.size()))
+        return;
+
+    activeSketch_.holes[static_cast<size_t>(index)].centerUV = centerUV;
+    notifyListeners();
+}
+
+void EngineerSceneModel::setSketchHoleDiameter(int index, float diameterMeters)
+{
+    if (index < 0 || index >= static_cast<int>(activeSketch_.holes.size()))
+        return;
+
+    activeSketch_.holes[static_cast<size_t>(index)].diameterMeters = juce::jmax(0.0005f, diameterMeters);
+    notifyListeners();
+}
+
+void EngineerSceneModel::setSketchThickness(float thicknessMeters)
+{
+    activeSketch_.thicknessMeters = juce::jmax(0.0005f, thicknessMeters);
+    notifyListeners();
+}
+
+const EngineerSceneModel::ActiveSketch& EngineerSceneModel::getActiveSketch() const noexcept
+{
+    return activeSketch_;
+}
+
+bool EngineerSceneModel::canFinishActiveSketch() const noexcept
+{
+    return activeSketch_.active && activeSketch_.boundaryPoints.size() >= 3;
+}
+
+void EngineerSceneModel::endSketch()
+{
+    activeSketch_ = ActiveSketch{};
+    editMode_ = EditMode::object;
+    notifyListeners();
+}
+
+juce::Vector3D<float> EngineerSceneModel::sketchPlaneToWorld(SketchPlane plane, juce::Vector3D<float> origin,
+                                                              juce::Point<float> uv)
+{
+    switch (plane)
+    {
+        case SketchPlane::xy: return { origin.x + uv.x, origin.y + uv.y, origin.z };
+        case SketchPlane::xz: return { origin.x + uv.x, origin.y, origin.z + uv.y };
+        case SketchPlane::yz: return { origin.x, origin.y + uv.x, origin.z + uv.y };
+    }
+
+    return origin;
+}
+
+juce::Point<float> EngineerSceneModel::worldToSketchPlane(SketchPlane plane, juce::Vector3D<float> origin,
+                                                           juce::Vector3D<float> world)
+{
+    const auto relative = world - origin;
+    switch (plane)
+    {
+        case SketchPlane::xy: return { relative.x, relative.y };
+        case SketchPlane::xz: return { relative.x, relative.z };
+        case SketchPlane::yz: return { relative.y, relative.z };
+    }
+
+    return {};
 }
 
 bool EngineerSceneModel::isSelectedObjectVertexEditable() const noexcept
@@ -758,7 +976,7 @@ int EngineerSceneModel::getNextObjectIdForSerialization() const noexcept
 
 void EngineerSceneModel::loadDrawing(std::vector<SceneObject> loadedObjects, std::vector<Layer> loadedLayers,
                                      int loadedSelectedObjectIndex, int loadedNextObjectId,
-                                     CameraPreset loadedCameraPreset)
+                                     CameraPreset loadedCameraPreset, juce::Vector3D<float> loadedCursorPosition)
 {
     if (loadedObjects.empty())
         loadedObjects.push_back(makeSceneObject("Cube", "Block", { 0.0f, 0.0f, 0.0f }, { 0.1f, 0.1f, 0.1f },
@@ -771,6 +989,9 @@ void EngineerSceneModel::loadDrawing(std::vector<SceneObject> loadedObjects, std
     selectedObjectIndex = juce::jlimit(0, static_cast<int>(objects.size()) - 1, loadedSelectedObjectIndex);
     nextObjectId_ = juce::jmax(1, loadedNextObjectId);
     cameraPreset = loadedCameraPreset;
+    cursorPosition_ = loadedCursorPosition;
+    activeSketch_ = ActiveSketch{};
+    editMode_ = EditMode::object;
     notifyListeners();
 }
 

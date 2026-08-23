@@ -72,6 +72,10 @@ target_sources(CreationEngineerApp PRIVATE
     Source/EngineerLayersComponent.h
     Source/EngineerSceneSerialization.cpp
     Source/EngineerSceneSerialization.h
+    Source/EngineerOrbitCameraController.cpp
+    Source/EngineerOrbitCameraController.h
+    Source/EngineerSketchComponent.cpp
+    Source/EngineerSketchComponent.h
 )
 
 target_include_directories(CreationEngineerApp PRIVATE
