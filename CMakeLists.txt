@@ -110,3 +110,23 @@ target_link_libraries(CreationEngineerApp PRIVATE
     juce::juce_recommended_lto_flags
     juce::juce_recommended_warning_flags
 )
+
+install(TARGETS CreationEngineerApp
+    RUNTIME DESTINATION .
+    RESOURCE DESTINATION .
+)
+install(FILES README.md LICENSE DESTINATION .)
+
+set(CPACK_PACKAGE_NAME "Creation Engineer")
+set(CPACK_PACKAGE_VENDOR "LagDaemon Software")
+set(CPACK_PACKAGE_CONTACT "LagDaemon Software")
+set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Creation Engineer")
+set(CPACK_PACKAGE_VERSION "${PROJECT_VERSION}")
+set(CPACK_PACKAGE_FILE_NAME "creation-engineer-${CPACK_PACKAGE_VERSION}-win64")
+set(CPACK_PACKAGE_INSTALL_DIRECTORY "Creation Engineer")
+set(CPACK_GENERATOR "ZIP;WIX")
+set(CPACK_WIX_PROGRAM_MENU_FOLDER "Creation Engineer")
+set(CPACK_PACKAGE_EXECUTABLES "Creation Engineer" "Creation Engineer")
+set(CPACK_CREATE_DESKTOP_LINKS "Creation Engineer")
+
+include(CPack)
