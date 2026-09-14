@@ -5,7 +5,7 @@
 class CreationEngineerApplication final : public juce::JUCEApplication
 {
 public:
-    const juce::String getApplicationName() override { return "Creation Engineer"; }
+    const juce::String getApplicationName() override { return "Djehuti Engineer"; }
     const juce::String getApplicationVersion() override { return "0.0.1"; }
     bool moreThanOneInstanceAllowed() override { return true; }
 
