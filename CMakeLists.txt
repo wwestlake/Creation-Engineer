@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.22)
 
-set(CreationEngineer_VERSION "0.0.1" CACHE STRING "Creation Engineer product version")
+set(CreationEngineer_VERSION "0.0.1" CACHE STRING "Djehuti Engineer product version")
 project(CreationEngineer VERSION ${CreationEngineer_VERSION} LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
@@ -17,10 +17,10 @@ if(MSVC)
     string(APPEND CMAKE_MODULE_LINKER_FLAGS_RELEASE " /DEBUG /OPT:REF /OPT:ICF")
 endif()
 
-set(CREATION_SUITE_SHARED_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../shared" CACHE PATH "Path to the Creation Suite shared code root")
+set(CREATION_SUITE_SHARED_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../shared" CACHE PATH "Path to the Djehuti Suite shared code root")
 
 include(cmake/CreationSharedLLVM.cmake)
-configure_creation_shared_llvm(CREATION_ENGINEER "Creation Engineer")
+configure_creation_shared_llvm(CREATION_ENGINEER "Djehuti Engineer")
 
 add_subdirectory("${JUCE_DIR}" juce)
 add_subdirectory(Language)
@@ -30,6 +30,13 @@ if(EXISTS "${CREATION_SUITE_SHARED_DIR}/AssetSystem/CMakeLists.txt")
     add_subdirectory("${CREATION_SUITE_SHARED_DIR}/AssetSystem"
                      "${CMAKE_CURRENT_BINARY_DIR}/CreationSuiteSharedAssetSystem")
     set(CREATION_ENGINEER_ASSET_SYSTEM_TARGET creation_suite_asset_system)
+endif()
+
+set(CREATION_ENGINEER_VFS_TARGET "")
+if(EXISTS "${CREATION_SUITE_SHARED_DIR}/VFS/CMakeLists.txt")
+    add_subdirectory("${CREATION_SUITE_SHARED_DIR}/VFS"
+                     "${CMAKE_CURRENT_BINARY_DIR}/CreationSuiteSharedVFS")
+    set(CREATION_ENGINEER_VFS_TARGET creation_suite_vfs)
 endif()
 
 set(CREATION_ENGINEER_SERVICES_TARGET "")
@@ -54,7 +61,7 @@ if(EXISTS "${CREATION_SUITE_SHARED_DIR}/Interop/CMakeLists.txt")
 endif()
 
 juce_add_gui_app(CreationEngineerApp
-    PRODUCT_NAME "Creation Engineer"
+    PRODUCT_NAME "Djehuti Engineer"
     COMPANY_NAME "LagDaemon Software"
     BUNDLE_ID "com.lagdaemon.creationengineer"
 )
@@ -81,6 +88,7 @@ target_compile_definitions(CreationEngineerApp PRIVATE
 
 target_link_libraries(CreationEngineerApp PRIVATE
     ${CREATION_ENGINEER_ASSET_SYSTEM_TARGET}
+    ${CREATION_ENGINEER_VFS_TARGET}
     ${CREATION_ENGINEER_SERVICES_TARGET}
     ${CREATION_ENGINEER_UI_TARGET}
     ${CREATION_ENGINEER_INTEROP_TARGET}
