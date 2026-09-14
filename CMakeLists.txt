@@ -32,6 +32,13 @@ if(EXISTS "${CREATION_SUITE_SHARED_DIR}/AssetSystem/CMakeLists.txt")
     set(CREATION_ENGINEER_ASSET_SYSTEM_TARGET creation_suite_asset_system)
 endif()
 
+set(CREATION_ENGINEER_VFS_TARGET "")
+if(EXISTS "${CREATION_SUITE_SHARED_DIR}/VFS/CMakeLists.txt")
+    add_subdirectory("${CREATION_SUITE_SHARED_DIR}/VFS"
+                     "${CMAKE_CURRENT_BINARY_DIR}/CreationSuiteSharedVFS")
+    set(CREATION_ENGINEER_VFS_TARGET creation_suite_vfs)
+endif()
+
 set(CREATION_ENGINEER_SERVICES_TARGET "")
 if(EXISTS "${CREATION_SUITE_SHARED_DIR}/Services/CMakeLists.txt")
     add_subdirectory("${CREATION_SUITE_SHARED_DIR}/Services"
@@ -81,6 +88,7 @@ target_compile_definitions(CreationEngineerApp PRIVATE
 
 target_link_libraries(CreationEngineerApp PRIVATE
     ${CREATION_ENGINEER_ASSET_SYSTEM_TARGET}
+    ${CREATION_ENGINEER_VFS_TARGET}
     ${CREATION_ENGINEER_SERVICES_TARGET}
     ${CREATION_ENGINEER_UI_TARGET}
     ${CREATION_ENGINEER_INTEROP_TARGET}
