@@ -2,6 +2,11 @@
 
 #include <JuceHeader.h>
 
+namespace branding
+{
+juce::Image CreateLogoImage(int size);
+}
+
 namespace creation_engineer::branding
 {
 juce::Colour backgroundColour() noexcept;

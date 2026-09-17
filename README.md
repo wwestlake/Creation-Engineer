@@ -1,6 +1,6 @@
-# Creation Engineer
+# Djehuti Engineer
 
-`Creation Engineer` is a Creation Suite application scaffold generated from the
+`Djehuti Engineer` is a Creation Suite application scaffold generated from the
 shared project template.
 
 ## What This Starter Includes

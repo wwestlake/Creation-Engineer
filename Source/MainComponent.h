@@ -1,60 +1,100 @@
-﻿#pragma once
+#pragma once
 
 #include <JuceHeader.h>
-#include <creation/assets/ProjectManifest.h>
-#include <creation/interop/ProjectRegistry.h>
-#include <creation/services/SuiteAiSettings.h>
-#include <creation/suite/SuiteSettings.h>
-#include <creation/suite/SuiteStoragePaths.h>
 #include <creation/ui/CreationSuiteHeaderBar.h>
 #include <creation/ui/SuiteShellController.h>
+#include <CreationDock/DockManager.h>
 
-class MainComponent final : public juce::Component
+#include "creation/engineering/BuiltinSpecLoader.h"
+#include "creation/engineering/SpecLibrary.h"
+
+#include "EngineerSceneModel.h"
+#include "EngineerViewportComponent.h"
+#include "EngineerNavigatorComponent.h"
+#include "EngineerPropertiesComponent.h"
+#include "EngineerModifiersComponent.h"
+#include "EngineerGeometryElementsComponent.h"
+#include "EngineerGeometryToolsComponent.h"
+#include "EngineerLibraryComponent.h"
+#include "EngineerLayersComponent.h"
+#include "EngineerSketchComponent.h"
+
+#include <creation/assets/ProjectSession.h>
+#include <creation/assets/ProjectWorkspaceService.h>
+#include <creation/suite/SuiteSettings.h>
+
+class MainComponent final : public juce::Component,
+                            private juce::MenuBarModel,
+                            private EngineerSceneModel::Listener
 {
 public:
     MainComponent();
     ~MainComponent() override;
 
-    void paint(juce::Graphics& g) override;
+    void paint(juce::Graphics&) override;
     void resized() override;
 
 private:
-    void configureHeader();
-    void configurePanels();
-    void loadSuiteState();
-    void refreshShellSummary();
-    creation::assets::SuiteAppDomain currentDomain() const noexcept;
-    juce::String domainDisplayName() const;
-    juce::String registrySummaryText() const;
-    juce::String aiSummaryText() const;
-    juce::String configSummaryText() const;
-    juce::String workbenchSummaryText() const;
+    void createNewProject();
+    void openProject(const juce::String& projectId);
+    void saveSessionToDisk(bool userInitiated = false);
+    void loadSessionFromDisk();
+    bool ensureProjectSessionActive(juce::String& errorMessage);
+    void saveAppSettings();
+    void loadAppSettings();
 
-    CreationSuiteHeaderBar headerBar;
-    creation::ui::SuiteShellController suiteShellController;
-    juce::Label titleLabel;
-    juce::Label subtitleLabel;
-    juce::Label runtimeLabel;
+    juce::StringArray getMenuBarNames() override;
+    juce::PopupMenu getMenuForIndex(int topLevelMenuIndex, const juce::String&) override;
+    void menuItemSelected(int menuItemID, int topLevelMenuIndex) override;
+    void initialiseDockingWorkspace();
+    // Maps a panel id to its fixed title + content component and registers
+    // it -- the one place that knowledge lives, shared by
+    // initialiseDockingWorkspace() (register all eleven at startup) and
+    // toggleDockPanel() (re-register just one on demand). CreationDock's
+    // current API has no separate open/closed state for an already-
+    // registered panel -- registerPanel()/unregisterPanel() is the only
+    // show/hide primitive -- so "toggle" here means unregister if present,
+    // else re-register into the given fallback zone.
+    void registerDockPanel(const juce::String& panelId, CreationDock::DockTargetZone zone);
+    void toggleDockPanel(const juce::String& panelId, CreationDock::DockTargetZone fallbackZone);
+    void onUserSpecLibraryChanged();
+    void engineerSceneModelChanged() override;
 
-    juce::GroupComponent workbenchGroup;
-    juce::GroupComponent resourcesGroup;
-    juce::GroupComponent aiGroup;
-    juce::GroupComponent configGroup;
+    std::unique_ptr<juce::MenuBarComponent> menuBar_;
+    std::unique_ptr<CreationDock::DockManager> dockManager_;
 
-    juce::TextEditor workbenchSummary;
-    juce::TextEditor resourcesSummary;
-    juce::TextEditor aiSummary;
-    juce::TextEditor configSummary;
+    creation::suite::SuiteSettings suiteSettings_;
+    creation::suite::SuiteSettingsStore suiteSettingsStore_;
+    creation::assets::ProjectSession projectSession_;
+    bool projectDirty_ = false;
 
-    creation::suite::SuiteSettingsStore suiteSettingsStore;
-    creation::services::SuiteAiSettingsStore suiteAiSettingsStore;
-    creation::suite::SuiteSettings suiteSettings;
-    creation::services::SuiteAiSettings suiteAiSettings;
+    CreationSuiteHeaderBar headerBar_;
+    creation::ui::SuiteShellController suiteShellController_;
 
-    juce::String lastRegistryError;
-    int domainProjectCount = 0;
-    int totalProjectCount = 0;
+    // Builtin (generic, shipped) + user-authored (persisted separately,
+    // tagged with manufacturer/part number) part-library records, combined
+    // into one library the viewports/library panel read from. See the
+    // parametric-part-libraries plan's Part A/B/F.
+    creation::engineering::SpecLibrary builtinSpecLibrary_;
+    creation::engineering::SpecLibrary userSpecLibrary_;
+    creation::engineering::SpecLibrary combinedSpecLibrary_;
+
+    // Real Djehuti Engineer workspace (geometry model + the six panels that
+    // observe it directly via EngineerSceneModel::Listener) -- replaces the
+    // borrowed CreationEngine shell (ce::World/ViewportComponent/HierarchyPanel/
+    // etc.) this app used to run as a placeholder. See docking rollout plan.
+    EngineerSceneModel sceneModel_;
+    EngineerNavigatorComponent navigatorPanel_;
+    EngineerPropertiesComponent propertiesPanel_;
+    EngineerModifiersComponent modifiersPanel_;
+    EngineerGeometryElementsComponent geometryElementsPanel_;
+    EngineerGeometryToolsComponent geometryToolsPanel_;
+    EngineerLibraryComponent libraryPanel_;
+    EngineerLayersComponent layersPanel_;
+    EngineerSketchComponent sketchPanel_;
+    EngineerViewportComponent viewportDesign3D_;
+    EngineerViewportComponent viewportAssemblyFloor_;
+    EngineerViewportComponent viewportPlanarElectronics_;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MainComponent)
 };
-
