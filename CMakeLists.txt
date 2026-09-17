@@ -17,57 +17,36 @@ if(MSVC)
     string(APPEND CMAKE_MODULE_LINKER_FLAGS_RELEASE " /DEBUG /OPT:REF /OPT:ICF")
 endif()
 
-set(CREATION_SUITE_SHARED_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../shared" CACHE PATH "Path to the Djehuti Suite shared code root")
-
-include(cmake/CreationSharedLLVM.cmake)
-configure_creation_shared_llvm(CREATION_ENGINEER "Djehuti Engineer")
-
 add_subdirectory("${JUCE_DIR}" juce)
-add_subdirectory(Language)
 
-set(CREATION_ENGINEER_ASSET_SYSTEM_TARGET "")
-if(EXISTS "${CREATION_SUITE_SHARED_DIR}/AssetSystem/CMakeLists.txt")
-    add_subdirectory("${CREATION_SUITE_SHARED_DIR}/AssetSystem"
-                     "${CMAKE_CURRENT_BINARY_DIR}/CreationSuiteSharedAssetSystem")
-    set(CREATION_ENGINEER_ASSET_SYSTEM_TARGET creation_suite_asset_system)
+# This app no longer borrows CreationEngine's Render/Views/Scene/Import/Audio
+# trees (or its entt/NodeSystem/EngineCore/CEL/Language dependency chain) --
+# it has its own self-contained geometry workspace (EngineerSceneModel + six
+# panels, Source/Engineer*.{h,cpp}) that touches none of that. See the docking
+# rollout plan for how/why this got dropped.
+add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../../shared/VFS" CreationSuiteSharedVFS)
+add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../../shared/AssetSystem" CreationSuiteSharedAssetSystem)
+add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../../shared/Services" CreationSuiteSharedServices)
+add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../../shared/UI" CreationSuiteSharedUI)
+if(NOT TARGET CreationDock)
+    add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../../shared/JuceDocking" CreationSuiteSharedDocking)
 endif()
-
-set(CREATION_ENGINEER_VFS_TARGET "")
-if(EXISTS "${CREATION_SUITE_SHARED_DIR}/VFS/CMakeLists.txt")
-    add_subdirectory("${CREATION_SUITE_SHARED_DIR}/VFS"
-                     "${CMAKE_CURRENT_BINARY_DIR}/CreationSuiteSharedVFS")
-    set(CREATION_ENGINEER_VFS_TARGET creation_suite_vfs)
+if(NOT TARGET creation_suite_render)
+    add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../../shared/Render" CreationSuiteSharedRender)
 endif()
-
-set(CREATION_ENGINEER_SERVICES_TARGET "")
-if(EXISTS "${CREATION_SUITE_SHARED_DIR}/Services/CMakeLists.txt")
-    add_subdirectory("${CREATION_SUITE_SHARED_DIR}/Services"
-                     "${CMAKE_CURRENT_BINARY_DIR}/CreationSuiteSharedServices")
-    set(CREATION_ENGINEER_SERVICES_TARGET creation_suite_services)
-endif()
-
-set(CREATION_ENGINEER_UI_TARGET "")
-if(EXISTS "${CREATION_SUITE_SHARED_DIR}/UI/CMakeLists.txt")
-    add_subdirectory("${CREATION_SUITE_SHARED_DIR}/UI"
-                     "${CMAKE_CURRENT_BINARY_DIR}/CreationSuiteSharedUI")
-    set(CREATION_ENGINEER_UI_TARGET creation_suite_ui)
-endif()
-
-set(CREATION_ENGINEER_INTEROP_TARGET "")
-if(EXISTS "${CREATION_SUITE_SHARED_DIR}/Interop/CMakeLists.txt")
-    add_subdirectory("${CREATION_SUITE_SHARED_DIR}/Interop"
-                     "${CMAKE_CURRENT_BINARY_DIR}/CreationSuiteSharedInterop")
-    set(CREATION_ENGINEER_INTEROP_TARGET creation_suite_interop)
+if(NOT TARGET creation_suite_engineering_specs)
+    add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../../shared/EngineeringSpecs" CreationSuiteSharedEngineeringSpecs)
 endif()
 
 juce_add_gui_app(CreationEngineerApp
     PRODUCT_NAME "Djehuti Engineer"
     COMPANY_NAME "LagDaemon Software"
     BUNDLE_ID "com.lagdaemon.creationengineer"
+    ICON_BIG "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/UI/assets/creation_engineer.png"
+    ICON_SMALL "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/UI/assets/creation_engineer.png"
 )
 
 creation_suite_add_shared_bin_copy(CreationEngineerApp)
-
 juce_generate_juce_header(CreationEngineerApp)
 
 target_sources(CreationEngineerApp PRIVATE
@@ -76,24 +55,61 @@ target_sources(CreationEngineerApp PRIVATE
     Source/MainComponent.h
     Source/Branding.cpp
     Source/Branding.h
-    Source/Shared/CreationSuiteHeaderBar.h
+    Source/EngineerSceneModel.cpp
+    Source/EngineerSceneModel.h
+    Source/EngineerViewportComponent.cpp
+    Source/EngineerViewportComponent.h
+    Source/EngineerOrthoCameraController.cpp
+    Source/EngineerOrthoCameraController.h
+    Source/EngineerNavigatorComponent.cpp
+    Source/EngineerNavigatorComponent.h
+    Source/EngineerPropertiesComponent.cpp
+    Source/EngineerPropertiesComponent.h
+    Source/EngineerModifiersComponent.cpp
+    Source/EngineerModifiersComponent.h
+    Source/EngineerGeometryElementsComponent.cpp
+    Source/EngineerGeometryElementsComponent.h
+    Source/EngineerGeometryToolsComponent.cpp
+    Source/EngineerGeometryToolsComponent.h
+    Source/EngineerLibraryComponent.cpp
+    Source/EngineerLibraryComponent.h
+    Source/EngineerUnits.cpp
+    Source/EngineerUnits.h
+    Source/EngineerLayersComponent.cpp
+    Source/EngineerLayersComponent.h
+    Source/EngineerSceneSerialization.cpp
+    Source/EngineerSceneSerialization.h
+    Source/EngineerOrbitCameraController.cpp
+    Source/EngineerOrbitCameraController.h
+    Source/EngineerSketchComponent.cpp
+    Source/EngineerSketchComponent.h
+)
+
+target_include_directories(CreationEngineerApp PRIVATE
+    Source
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/JuceDocking/include"
 )
 
 target_compile_definitions(CreationEngineerApp PRIVATE
     JUCE_WEB_BROWSER=0
     JUCE_USE_CURL=0
+    JUCE_OPENGL3=1
     JUCE_APPLICATION_NAME_STRING="$<TARGET_PROPERTY:CreationEngineerApp,JUCE_PRODUCT_NAME>"
     JUCE_APPLICATION_VERSION_STRING="$<TARGET_PROPERTY:CreationEngineerApp,JUCE_VERSION>"
+    ENGINEER_SHADER_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../../shared/Render/Shaders"
+    ENGINEERING_SPECS_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../../shared/EngineeringSpecs/data"
 )
 
 target_link_libraries(CreationEngineerApp PRIVATE
-    ${CREATION_ENGINEER_ASSET_SYSTEM_TARGET}
-    ${CREATION_ENGINEER_VFS_TARGET}
-    ${CREATION_ENGINEER_SERVICES_TARGET}
-    ${CREATION_ENGINEER_UI_TARGET}
-    ${CREATION_ENGINEER_INTEROP_TARGET}
-    creation_engineer_language_host
+    creation_suite_asset_system
+    creation_suite_services
+    creation_suite_ui
+    creation_suite_ui_assets
+    creation_suite_render
+    creation_suite_engineering_specs
+    CreationDock
     juce::juce_gui_extra
+    juce::juce_opengl
     juce::juce_audio_basics
     juce::juce_audio_devices
     juce::juce_audio_formats
@@ -102,3 +118,22 @@ target_link_libraries(CreationEngineerApp PRIVATE
     juce::juce_recommended_warning_flags
 )
 
+install(TARGETS CreationEngineerApp
+    RUNTIME DESTINATION .
+    RESOURCE DESTINATION .
+)
+install(FILES README.md LICENSE DESTINATION .)
+
+set(CPACK_PACKAGE_NAME "Djehuti Engineer")
+set(CPACK_PACKAGE_VENDOR "LagDaemon Software")
+set(CPACK_PACKAGE_CONTACT "LagDaemon Software")
+set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Djehuti Engineer")
+set(CPACK_PACKAGE_VERSION "${PROJECT_VERSION}")
+set(CPACK_PACKAGE_FILE_NAME "djehuti-engineer-${CPACK_PACKAGE_VERSION}-win64")
+set(CPACK_PACKAGE_INSTALL_DIRECTORY "Djehuti Engineer")
+set(CPACK_GENERATOR "ZIP;WIX")
+set(CPACK_WIX_PROGRAM_MENU_FOLDER "Djehuti Engineer")
+set(CPACK_PACKAGE_EXECUTABLES "Djehuti Engineer" "Djehuti Engineer")
+set(CPACK_CREATE_DESKTOP_LINKS "Djehuti Engineer")
+
+include(CPack)
