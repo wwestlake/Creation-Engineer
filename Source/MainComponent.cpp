@@ -169,7 +169,7 @@ void MainComponent::paint(juce::Graphics& g) {
 void MainComponent::resized() {
     auto bounds = getLocalBounds();
 
-    headerBar_.setBounds(bounds.removeFromTop(96));
+    headerBar_.setBounds(bounds.removeFromTop(CreationSuiteHeaderBar::preferredHeight));
 
     if (menuBar_ != nullptr)
         menuBar_->setBounds(bounds.removeFromTop(28));
