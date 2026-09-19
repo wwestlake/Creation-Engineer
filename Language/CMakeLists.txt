@@ -12,3 +12,6 @@ else()
     target_compile_definitions(creation_engineer_language_host PUBLIC CREATION_ENGINEER_ENABLE_SCRIPTING=0)
 endif()
 
+
+# Auto-generated output name overrides
+set_target_properties(creation_engineer_language_host PROPERTIES OUTPUT_NAME "djehuti_engineer_language_host")

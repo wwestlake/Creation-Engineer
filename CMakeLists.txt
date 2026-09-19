@@ -39,7 +39,7 @@ if(NOT TARGET creation_suite_engineering_specs)
 endif()
 
 juce_add_gui_app(CreationEngineerApp
-    PRODUCT_NAME "Djehuti Engineer"
+    PRODUCT_NAME "DjehutiEngineer"
     COMPANY_NAME "LagDaemon Software"
     BUNDLE_ID "com.lagdaemon.creationengineer"
     ICON_BIG "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/UI/assets/creation_engineer.png"
@@ -124,16 +124,25 @@ install(TARGETS CreationEngineerApp
 )
 install(FILES README.md LICENSE DESTINATION .)
 
-set(CPACK_PACKAGE_NAME "Djehuti Engineer")
+set(CPACK_PACKAGE_NAME "DjehutiEngineer")
 set(CPACK_PACKAGE_VENDOR "LagDaemon Software")
 set(CPACK_PACKAGE_CONTACT "LagDaemon Software")
-set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Djehuti Engineer")
+set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "DjehutiEngineer")
 set(CPACK_PACKAGE_VERSION "${PROJECT_VERSION}")
 set(CPACK_PACKAGE_FILE_NAME "djehuti-engineer-${CPACK_PACKAGE_VERSION}-win64")
-set(CPACK_PACKAGE_INSTALL_DIRECTORY "Djehuti Engineer")
+set(CPACK_PACKAGE_INSTALL_DIRECTORY "DjehutiEngineer")
 set(CPACK_GENERATOR "ZIP;WIX")
-set(CPACK_WIX_PROGRAM_MENU_FOLDER "Djehuti Engineer")
-set(CPACK_PACKAGE_EXECUTABLES "Djehuti Engineer" "Djehuti Engineer")
-set(CPACK_CREATE_DESKTOP_LINKS "Djehuti Engineer")
+set(CPACK_WIX_PROGRAM_MENU_FOLDER "DjehutiEngineer")
+set(CPACK_PACKAGE_EXECUTABLES "DjehutiEngineer" "Djehuti Engineer")
+set(CPACK_CREATE_DESKTOP_LINKS "DjehutiEngineer")
 
 include(CPack)
+
+add_custom_command(TARGET CreationEngineerApp POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory "D:/CreationSuite-Workspaces/gemini-$<LOWER_CASE:$<CONFIG>>-bin"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:CreationEngineerApp>" "D:/CreationSuite-Workspaces/gemini-$<LOWER_CASE:$<CONFIG>>-bin/"
+    COMMENT "Copying CreationEngineerApp to the shared gemini bin directory"
+)
+
+# Auto-generated output name overrides
+set_target_properties(CreationEngineerApp PROPERTIES OUTPUT_NAME "DjehutiEngineerApp")
